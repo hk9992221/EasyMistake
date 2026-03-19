@@ -1,0 +1,41 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Backend runtime artifacts
+backend/.env
+backend/exports/
+backend/data/
+backend/**/*.log
+backend/api/n1n.json
+
+# Node / frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env*.local
+frontend/.vercel/
+frontend/*.tsbuildinfo
+
+# Build / package artifacts
+dist/
+build/
+*.egg-info/
+*.zip
+

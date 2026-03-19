@@ -1,0 +1,71 @@
+{
+    "BaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "model":[
+        {
+            "name": "qwen3-max",
+            "inputmode": ["text"],
+            "structed_output": true,
+            "search_online": true,
+            "prefix_reading&writing": true,
+            "batch_reasoning": true,
+            "input_price_pm": 2.5,
+            "output_price_pm": 10,
+            "input_batch_file_price_pm":2.5
+        },
+        {
+            "name": "deepseek-v3.2",
+            "inputmode": ["text"],
+            "structed_output": false,
+            "search_online": true,
+            "prefix_reading&writing": false,
+            "batch_reasoning": false,
+            "input_price_pm": 2,
+            "output_price_pm": 3,
+            "input_batch_file_price_pm":0
+        },
+        {
+            "name": "qwen3.5-plus",
+            "inputmode": ["text", "image", "video"],
+            "structed_output": true,
+            "search_online": true,
+            "prefix_reading&writing": true,
+            "batch_reasoning": true,
+            "input_price_pm": 0.8,
+            "output_price_pm": 4.8,
+            "input_batch_file_price_pm":0.4
+        },
+        {
+            "name": "qwen3.5-flash",
+            "inputmode": ["text", "image", "video"],
+            "structed_output": true,
+            "search_online": true,
+            "prefix_reading&writing": true,
+            "batch_reasoning": true,
+            "input_price_pm": 0.2,
+            "output_price_pm": 2,
+            "input_batch_file_price_pm":0.1
+        },
+        {
+            "name": "qwen3-vl-flash",
+            "inputmode": ["text", "image", "video"],
+            "structed_output": true,
+            "search_online": false,
+            "prefix_reading&writing": true,
+            "batch_reasoning": false,
+            "input_price_pm": 0.15,
+            "output_price_pm": 1.5,
+            "input_batch_file_price_pm":0.075
+        },
+        {
+            "name": "qwen3-vl-plus",
+            "inputmode": ["text", "image", "video"],
+            "structed_output": true,
+            "search_online": false,
+            "prefix_reading&writing": true,
+            "batch_reasoning": true,
+            "input_price_pm": 1,
+            "output_price_pm": 10,
+            "input_batch_file_price_pm":0.5
+        }
+    ]
+}
