@@ -137,7 +137,7 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
-本地默认使用隔离的 SQLite 数据库；设置 `TEST_DATABASE_URL=postgresql+asyncpg://...` 可使用 PostgreSQL，每个测试创建临时 schema。CI 使用 PostgreSQL 16，执行全量迁移和同一组测试。OCR 和 S3 在测试中使用替身，不调用付费服务。
+本地默认使用隔离的 SQLite 数据库；设置 `TEST_DATABASE_URL=postgresql+asyncpg://...` 可使用 PostgreSQL，每个测试创建临时 schema。CI 使用 PostgreSQL 16，执行全量迁移、迁移回滚再升级和同一组测试。OCR 和 S3 在测试中使用替身，不调用付费服务。
 
 前端验证：`cd frontend && npm ci && npm run type-check && npm run build`。
 

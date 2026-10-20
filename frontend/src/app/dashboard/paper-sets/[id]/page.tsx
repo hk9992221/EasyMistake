@@ -79,6 +79,7 @@ export default function PaperSetDetailPage() {
       return response.data
     },
     enabled: showExportHistory,
+    refetchInterval: (query) => query.state.data?.some((item) => ['PENDING', 'RUNNING'].includes(item.status)) ? 2000 : false,
   })
 
   const updateMutation = useMutation({
@@ -264,6 +265,7 @@ export default function PaperSetDetailPage() {
                     {item.format === 'PDF' ? <File className="h-5 w-5" /> : <FileArchive className="h-5 w-5" />}
                     <div>
                       <div className="font-medium">{item.format}</div>
+                      {item.error && <p className="text-sm text-destructive">{item.error}</p>}
                       <div className="text-xs text-muted-foreground">{item.created_at ? new Date(item.created_at).toLocaleString() : '-'}</div>
                     </div>
                     <Badge variant="outline">{normalizeStatus(item.status)}</Badge>
