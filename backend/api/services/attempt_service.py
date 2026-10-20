@@ -7,6 +7,7 @@ from api.models.question import Question
 from api.schemas.attempt import AttemptCreate, AttemptUpdate
 from api.core.exceptions import NotFoundError, ForbiddenError
 from api.core.datetime_utils import utcnow
+from api.core.access import require_question_access
 from api.services.question_progress_service import question_progress_service
 
 
@@ -18,12 +19,9 @@ class AttemptService:
         db: AsyncSession,
         user_id: UUID,
         attempt_data: AttemptCreate,
+        is_admin: bool = False,
     ) -> Attempt:
-        # Verify question exists and user has access
-        result = await db.execute(select(Question).where(Question.id == attempt_data.question_id))
-        question = result.scalar_one_or_none()
-        if not question:
-            raise NotFoundError(detail="Question not found")
+        await require_question_access(db, attempt_data.question_id, user_id, is_admin)
 
         attempt = Attempt(
             user_id=user_id,
@@ -104,12 +102,16 @@ class AttemptService:
         if not is_admin and attempt.user_id != user_id:
             raise ForbiddenError(detail="You don't have permission to update this attempt")
 
+        await db.execute(select(Question.id).where(Question.id == attempt.question_id).with_for_update())
+        await db.refresh(attempt)
         update_data = attempt_data.model_dump(exclude_unset=True)
         if "error_tags" in update_data:
             update_data["error_tags_json"] = update_data.pop("error_tags") or []
         for field, value in update_data.items():
             setattr(attempt, field, value)
 
+        await db.flush()
+        await question_progress_service.rebuild_progress(db, attempt.user_id, attempt.question_id)
         await db.commit()
         await db.refresh(attempt)
         return attempt
@@ -126,7 +128,11 @@ class AttemptService:
         if not is_admin and attempt.user_id != user_id:
             raise ForbiddenError(detail="You don't have permission to delete this attempt")
 
+        await db.execute(select(Question.id).where(Question.id == attempt.question_id).with_for_update())
+        owner_id, question_id = attempt.user_id, attempt.question_id
         await db.delete(attempt)
+        await db.flush()
+        await question_progress_service.rebuild_progress(db, owner_id, question_id)
         await db.commit()
 
     async def get_mistakes_analysis(
@@ -162,49 +168,21 @@ class AttemptService:
         db: AsyncSession,
         user_id: UUID,
     ) -> dict:
-        total_attempts_result = await db.execute(
-            select(func.count()).where(Attempt.user_id == user_id)
-        )
-        total_attempts = total_attempts_result.scalar() or 0
-
-        wrong_questions_result = await db.execute(
-            select(func.count(func.distinct(Attempt.question_id))).where(
-                Attempt.user_id == user_id,
-                Attempt.result == AttemptResult.WRONG,
-            )
-        )
-        total_wrong_questions = wrong_questions_result.scalar() or 0
-
-        latest_per_question = (
-            select(
-                Attempt.question_id.label("question_id"),
-                func.max(Attempt.occurred_at).label("latest_occurred_at"),
-            )
-            .where(Attempt.user_id == user_id)
-            .group_by(Attempt.question_id)
-            .subquery()
-        )
-
-        unmastered_result = await db.execute(
-            select(func.count())
-            .select_from(Attempt)
-            .join(
-                latest_per_question,
-                (Attempt.question_id == latest_per_question.c.question_id)
-                & (Attempt.occurred_at == latest_per_question.c.latest_occurred_at),
-            )
-            .where(
-                Attempt.user_id == user_id,
-                Attempt.result == AttemptResult.WRONG,
-            )
-        )
-        unmastered_wrong_questions = unmastered_result.scalar() or 0
-
-        return {
-            "total_attempts": total_attempts,
-            "total_wrong_questions": total_wrong_questions,
-            "unmastered_wrong_questions": unmastered_wrong_questions,
-        }
+        active = select(Question.id).where(Question.is_deleted.is_(False))
+        conditions = (Attempt.user_id == user_id, Attempt.question_id.in_(active))
+        total_attempts = (await db.execute(select(func.count()).select_from(Attempt).where(*conditions))).scalar() or 0
+        total_wrong_questions = (await db.execute(select(func.count(func.distinct(Attempt.question_id))).where(
+            *conditions, Attempt.result == AttemptResult.WRONG,
+        ))).scalar() or 0
+        latest = select(Attempt.result, func.row_number().over(
+            partition_by=Attempt.question_id,
+            order_by=(Attempt.submitted_at.desc(), Attempt.occurred_at.desc(), Attempt.created_at.desc(), Attempt.id.desc()),
+        ).label("position")).where(*conditions).subquery()
+        unmastered = (await db.execute(select(func.count()).select_from(latest).where(
+            latest.c.position == 1, latest.c.result == AttemptResult.WRONG,
+        ))).scalar() or 0
+        return {"total_attempts": total_attempts, "total_wrong_questions": total_wrong_questions,
+                "unmastered_wrong_questions": unmastered}
 
 
 attempt_service = AttemptService()

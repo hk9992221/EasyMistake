@@ -23,6 +23,8 @@ from api.models.answer_image import AnswerImage
 from api.models.question_image import QuestionImage
 from api.models.image import Image
 from api.models.question import Question
+from api.models.question_progress import QuestionProgress
+from api.core.access import require_owned_resources
 from api.core.exceptions import ForbiddenError, NotFoundError
 
 
@@ -45,7 +47,8 @@ def _build_image_proxy_url(request: Request | None, image_id: UUID) -> str:
 async def _serialize_question_with_images(
     db: AsyncSession,
     question: Question,
-    request: Request = None
+    request: Request = None,
+    images: list | None = None,
 ) -> dict:
     """序列化题目，包含题干图片信息"""
     result = {
@@ -74,15 +77,11 @@ async def _serialize_question_with_images(
         "stem_images": []
     }
 
-    # 查询关联的题干图片
-    stmt = (
-        select(QuestionImage, Image)
-        .join(Image, QuestionImage.image_id == Image.id)
-        .where(QuestionImage.question_id == question.id)
-        .order_by(QuestionImage.order_index)
-    )
-    images_result = await db.execute(stmt)
-    images = images_result.all()
+    if images is None:
+        images = (await db.execute(select(QuestionImage, Image)
+            .join(Image, QuestionImage.image_id == Image.id)
+            .where(QuestionImage.question_id == question.id)
+            .order_by(QuestionImage.order_index))).all()
 
     for question_image, image in images:
         result["stem_images"].append(
@@ -94,6 +93,27 @@ async def _serialize_question_with_images(
         )
 
     return result
+
+
+async def _serialize_question_list(db, questions, user_id, request):
+    if not questions:
+        return []
+    ids = [question.id for question in questions]
+    images = (await db.execute(select(QuestionImage, Image)
+        .join(Image, QuestionImage.image_id == Image.id)
+        .where(QuestionImage.question_id.in_(ids))
+        .order_by(QuestionImage.question_id, QuestionImage.order_index))).all()
+    grouped = {}
+    for link, image in images:
+        grouped.setdefault(link.question_id, []).append((link, image))
+    scores = dict((await db.execute(select(QuestionProgress.question_id, QuestionProgress.proficiency_score)
+        .where(QuestionProgress.user_id == user_id, QuestionProgress.question_id.in_(ids)))).all())
+    items = []
+    for question in questions:
+        item = await _serialize_question_with_images(db, question, request, grouped.get(question.id, []))
+        item["proficiency_score"] = scores.get(question.id, 0)
+        items.append(item)
+    return items
 
 
 async def _serialize_answer_with_images(db: AsyncSession, answer: Answer, request: Request = None) -> dict:
@@ -156,7 +176,7 @@ async def create_question(
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ):
-    question = await question_service.create_question(db, current_user.id, question_data)
+    question = await question_service.create_question(db, current_user.id, question_data, is_admin=current_user.role == UserRole.ADMIN)
     return await _serialize_question_with_images(db, question, request)
 
 
@@ -174,6 +194,8 @@ async def list_questions(
     tags_json: Optional[list[str]] = Query(None),
     knowledge_point_q: Optional[str] = None,
     q: Optional[str] = None,
+    proficiency_min: Optional[int] = Query(None, ge=0, le=100),
+    proficiency_max: Optional[int] = Query(None, ge=0, le=100),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     page: int = Query(1, ge=1),
@@ -183,6 +205,8 @@ async def list_questions(
     request: Request = None,
 ):
     params = QuestionListParams(
+        proficiency_min=proficiency_min,
+        proficiency_max=proficiency_max,
         subject=subject,
         book_name=book_name,
         chapter_name=chapter_name,
@@ -213,9 +237,7 @@ async def list_questions(
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     # 序列化题目，包含图片信息
-    items_with_images = []
-    for question in questions:
-        items_with_images.append(await _serialize_question_with_images(db, question, request))
+    items_with_images = await _serialize_question_list(db, questions, current_user.id, request)
 
     return PaginatedResponse(
         items=items_with_images,
@@ -323,6 +345,7 @@ async def upsert_answer(
         question_id,
         answer_data,
         updater_id=current_user.id,
+        is_admin=is_admin,
     )
 
     # 手动序列化答案，包含图片信息
@@ -344,6 +367,8 @@ async def add_question_image(
     is_admin = current_user.role == UserRole.ADMIN
     if not is_admin and question.user_id != current_user.id:
         raise ForbiddenError(detail="You don't have permission to modify this question")
+
+    await require_owned_resources(db, Image, [image_id], current_user.id, is_admin)
 
     # 获取当前最大的 order_index
     stmt = select(func.max(QuestionImage.order_index)).where(

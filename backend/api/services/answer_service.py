@@ -6,6 +6,7 @@ from api.models.answer import Answer
 from api.models.answer_image import AnswerImage
 from api.models.image import Image
 from api.schemas.answer import AnswerUpdate
+from api.core.access import require_owned_resources
 
 
 class AnswerService:
@@ -21,13 +22,16 @@ class AnswerService:
         question_id: UUID,
         answer_data: AnswerUpdate,
         updater_id: Optional[UUID] = None,
+        is_admin: bool = False,
     ) -> Answer:
         result = await db.execute(select(Answer).where(Answer.question_id == question_id))
         answer = result.scalar_one_or_none()
 
         # 分离图片数据和其他字段
         data = answer_data.model_dump(exclude_unset=True, exclude={"images"})
-        images_data = answer_data.images if hasattr(answer_data, 'images') and answer_data.images else None
+        images_data = answer_data.images if "images" in answer_data.model_fields_set else None
+        if images_data:
+            await require_owned_resources(db, Image, [item.image_id for item in images_data], updater_id, is_admin)
 
         if answer:
             # 更新现有答案

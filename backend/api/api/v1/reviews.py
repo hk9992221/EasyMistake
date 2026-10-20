@@ -38,7 +38,7 @@ async def complete_review(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    attempt = await review_service.complete_review(db, current_user.id, question_id, payload)
+    attempt = await review_service.complete_review(db, current_user.id, question_id, payload, is_admin=current_user.role == "ADMIN")
     return {"attempt_id": str(attempt.id)}
 
 

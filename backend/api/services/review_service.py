@@ -3,6 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.core.datetime_utils import local_day_bounds_utc, utcnow
 from api.models.question_progress import QuestionProgress
+from api.models.question import Question
+from api.services.question_progress_service import question_progress_service
 from api.schemas.question_progress import ReviewCompleteRequest
 from api.schemas.attempt import AttemptCreate
 from api.models.attempt import AttemptResult
@@ -15,7 +17,7 @@ class ReviewService:
         overdue_hours = 0
         if progress.next_review_at and progress.next_review_at < now:
             overdue_hours = int((now - progress.next_review_at).total_seconds() // 3600)
-        priority = min(100, 50 + overdue_hours + (100 - (progress.proficiency_score or 50)) // 2)
+        priority = min(100, 50 + overdue_hours + (100 - (progress.proficiency_score if progress.proficiency_score is not None else 50)) // 2)
         if overdue_hours > 0 and (progress.mastery_level or 0) <= 1:
             reason = "overdue_and_low_mastery"
         elif progress.last_result == AttemptResult.WRONG.value:
@@ -26,7 +28,7 @@ class ReviewService:
 
     async def get_queue(self, db: AsyncSession, user_id: UUID, today_only: bool = False, limit: int = 100) -> list[dict]:
         now = utcnow()
-        query = select(QuestionProgress).where(QuestionProgress.user_id == user_id)
+        query = select(QuestionProgress).join(Question).where(QuestionProgress.user_id == user_id, Question.is_deleted.is_(False))
         if today_only:
             _, end_of_day_utc = local_day_bounds_utc()
             query = query.where(QuestionProgress.next_review_at <= end_of_day_utc)
@@ -54,6 +56,7 @@ class ReviewService:
         user_id: UUID,
         question_id: UUID,
         payload: ReviewCompleteRequest,
+        is_admin: bool = False,
     ):
         attempt_data = AttemptCreate(
             question_id=question_id,
@@ -64,18 +67,17 @@ class ReviewService:
             error_tags=payload.error_tags,
             note=payload.note,
         )
-        return await attempt_service.create_attempt(db, user_id, attempt_data)
+        return await attempt_service.create_attempt(db, user_id, attempt_data, is_admin=is_admin)
 
     async def recalculate(self, db: AsyncSession, user_id: UUID) -> int:
-        result = await db.execute(select(QuestionProgress).where(QuestionProgress.user_id == user_id))
-        count = 0
-        for progress in result.scalars().all():
-            if not progress.next_review_at:
-                progress.next_review_at = utcnow()
-                count += 1
-        if count:
-            await db.commit()
-        return count
+        ids = (await db.execute(select(QuestionProgress.question_id).join(Question).where(
+            QuestionProgress.user_id == user_id, Question.is_deleted.is_(False),
+        ).order_by(QuestionProgress.question_id))).scalars().all()
+        for question_id in ids:
+            await db.execute(select(Question.id).where(Question.id == question_id).with_for_update())
+            await question_progress_service.rebuild_progress(db, user_id, question_id)
+        await db.commit()
+        return len(ids)
 
 
 review_service = ReviewService()

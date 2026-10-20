@@ -82,11 +82,14 @@ class QuestionResponse(BaseSchema):
     is_deleted: bool
     created_at: datetime
     updated_at: datetime
+    proficiency_score: Optional[int] = None
     # 题干图片列表
     stem_images: List[QuestionImageItem] = Field(default_factory=list)
 
 
 class QuestionListParams(BaseSchema):
+    proficiency_min: Optional[int] = Field(None, ge=0, le=100)
+    proficiency_max: Optional[int] = Field(None, ge=0, le=100)
     subject: Optional[str] = None
     book_name: Optional[str] = None
     chapter_name: Optional[str] = None

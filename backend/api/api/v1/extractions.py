@@ -89,7 +89,8 @@ async def create_questions_from_extraction(
     created = []
     for question in questions:
         question.from_extraction_id = extraction_id
-        created.append(await question_service.create_question(db, extraction.user_id, question))
+        created.append(await question_service.create_question(db, extraction.user_id, question, commit=False, is_admin=is_admin))
+    await db.commit()
     return created
 
 
