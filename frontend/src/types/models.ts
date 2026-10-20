@@ -59,13 +59,12 @@ export interface Paper {
 // ==================== 识别任务 ====================
 export interface Extraction {
   id: string
-  createdBy: string
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  user_id: string
+  status: 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED'
   error: string | null
-  rawResult: Record<string, any> | null
-  createdAt: string
-  updatedAt: string
-  images?: ExtractionImage[]
+  raw_json: Record<string, any> | null
+  created_at: string
+  updated_at: string
 }
 
 export interface ExtractionImage {
@@ -76,25 +75,15 @@ export interface ExtractionImage {
 }
 
 export interface DraftQuestion {
-  // 草稿题目，用于识别结果编辑后入库
-  stemText: string
-  stemLatex: string | null
-  contentJson: Record<string, any> | null
-  questionType: string
-  options: Record<string, any> | null
-  subject: string
-  bookName: string | null
-  chapterName: string | null
-  sectionName: string | null
-  pageNo: number | null
-  questionNo: string | null
-  difficulty: string | null
-  tags: string[] | null
-  metadata: Record<string, any> | null
+  number: string
+  problem: string
+  choices?: string | null
+  appendix?: string | null
 }
 
 // ==================== 题目相关 ====================
 export interface Question {
+  proficiency_score?: number | null
   id: string
   user_id: string
   created_by?: string | null
@@ -298,6 +287,8 @@ export interface PaginationParams {
 }
 
 export interface QuestionFilters extends PaginationParams {
+  proficiency_min?: number
+  proficiency_max?: number
   subject?: string
   book_name?: string
   chapter_name?: string

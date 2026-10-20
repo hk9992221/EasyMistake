@@ -108,4 +108,4 @@ async def retry_extraction(
     if not is_admin and extraction.user_id != current_user.id:
         raise ForbiddenError(detail="You don't have permission to access this extraction")
 
-    return await extraction_service.run_extraction(db, extraction)
+    return await extraction_service.retry_extraction(db, extraction)

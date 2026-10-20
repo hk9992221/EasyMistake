@@ -6,7 +6,7 @@ from api.core.exceptions import NotFoundError, ForbiddenError
 
 
 async def require_question_access(db: AsyncSession, question_id: UUID, user_id: UUID, is_admin: bool = False):
-    question = (await db.execute(select(Question).where(Question.id == question_id).with_for_update())).scalar_one_or_none()
+    question = (await db.execute(select(Question).where(Question.id == question_id).with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
     if question is None or question.is_deleted:
         raise NotFoundError(detail="Question not found")
     if not is_admin and question.user_id != user_id:

@@ -1,4 +1,6 @@
-﻿'use client'
+'use client'
+
+import { invalidateLearning } from '@/lib/api/invalidate-learning'
 
 import { useState } from 'react'
 import Link from 'next/link'
@@ -77,10 +79,7 @@ export default function ReviewsPage() {
       errorTags?: string[]
     }) => reviewsApi.complete(questionId, { result, error_tags: errorTags || [] }),
     onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['reviews-today-page'] })
-      queryClient.invalidateQueries({ queryKey: ['dashboard-reviews-today'] })
-      queryClient.invalidateQueries({ queryKey: ['dashboard-analytics-overview'] })
-      queryClient.invalidateQueries({ queryKey: ['dashboard-error-tags'] })
+      invalidateLearning(queryClient)
       setErrorTagsMap((prev) => ({ ...prev, [variables.questionId]: [] }))
     },
     onError: () => {

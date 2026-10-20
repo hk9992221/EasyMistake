@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import re
 from uuid import UUID
@@ -11,8 +11,10 @@ from api.models.image import Image
 from api.models.api_call_log import ApiCallLog
 from api.schemas.extraction import ExtractionCreate, DraftQuestion, DraftQuestionsResponse
 from api.core.exceptions import NotFoundError, ForbiddenError
-from api.core.jobs import create_job
-from api.models.job import JobType
+from api.core.jobs import create_job, require_job_lease
+from api.core.access import require_owned_resources
+from api.models.paper import Paper
+from api.models.job import Job, JobType, JobStatus
 from api.services.image_service import image_service
 from api.services.ocr_service import ocr_service
 from api.services.pricing_service import pricing_service
@@ -130,17 +132,8 @@ class ExtractionService:
         extraction_data: ExtractionCreate,
         is_admin: bool = False,
     ) -> QuestionExtraction:
-        result = await db.execute(select(Image).where(Image.id.in_(extraction_data.image_ids)))
-        images = result.scalars().all()
-
-        if len(images) != len(extraction_data.image_ids):
-            raise NotFoundError(detail="One or more images not found")
-
-        if not is_admin:
-            for image in images:
-                if image.user_id != user_id:
-                    raise ForbiddenError(detail="You don't have access to one or more images")
-
+        await require_owned_resources(db, Image, extraction_data.image_ids, user_id, is_admin)
+        await require_owned_resources(db, Paper, [extraction_data.paper_id] if extraction_data.paper_id else [], user_id, is_admin)
         extraction = QuestionExtraction(
             user_id=user_id,
             paper_id=extraction_data.paper_id,
@@ -150,8 +143,7 @@ class ExtractionService:
         )
 
         db.add(extraction)
-        await db.commit()
-        await db.refresh(extraction)
+        await db.flush()
 
         for order_index, image_id in enumerate(extraction_data.image_ids):
             db.add(
@@ -162,14 +154,15 @@ class ExtractionService:
                 )
             )
 
-        await db.commit()
-
         await create_job(
             db,
             user_id=user_id,
             job_type=JobType.EXTRACTION,
             payload={"extraction_id": str(extraction.id)},
+            commit=False,
         )
+        await db.commit()
+        await db.refresh(extraction)
 
         return extraction
 
@@ -213,7 +206,29 @@ class ExtractionService:
 
         return DraftQuestionsResponse(extraction_id=extraction.id, questions=draft_questions)
 
-    async def run_extraction(self, db: AsyncSession, extraction: QuestionExtraction) -> QuestionExtraction:
+    async def retry_extraction(self, db, extraction):
+        extraction = (await db.execute(select(QuestionExtraction).where(
+            QuestionExtraction.id == extraction.id,
+        ).with_for_update().execution_options(populate_existing=True))).scalar_one()
+        if extraction.status == ExtractionStatus.DONE.value:
+            return extraction
+        active = (await db.execute(select(Job.id).where(
+            Job.type == JobType.EXTRACTION.value,
+            Job.payload["extraction_id"].as_string() == str(extraction.id),
+            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+        ).limit(1))).scalar_one_or_none()
+        if active is not None:
+            return extraction
+        extraction.status = ExtractionStatus.PENDING.value
+        extraction.error = None
+        await create_job(db, extraction.user_id, JobType.EXTRACTION,
+                         {"extraction_id": str(extraction.id)}, commit=False)
+        await db.commit()
+        await db.refresh(extraction)
+        return extraction
+
+    async def run_extraction(self, db: AsyncSession, extraction: QuestionExtraction, job_id: UUID, worker_id: str) -> QuestionExtraction:
+        await require_job_lease(db, job_id, worker_id)
         extraction.status = ExtractionStatus.RUNNING.value
         extraction.error = None
         await db.commit()
@@ -226,6 +241,7 @@ class ExtractionService:
             .order_by(ExtractionImage.order_index.asc())
         )
         images = list(result.scalars().all())
+        await db.commit()
         if not images:
             extraction.status = ExtractionStatus.FAILED.value
             extraction.error = "No images attached to extraction"
@@ -262,29 +278,23 @@ class ExtractionService:
                     db.add(api_log)
 
                 normalized_questions = self._normalize_ocr_questions(ocr_result)
-                if normalized_questions:
-                    questions.extend(normalized_questions)
-                else:
-                    # Backward-compatible fallback for unexpected payloads
-                    if isinstance(ocr_result, dict):
-                        if isinstance(ocr_result.get("questions"), list):
-                            questions.extend(ocr_result["questions"])
-                        else:
-                            questions.append(ocr_result)
-                    elif isinstance(ocr_result, list):
-                        questions.extend(ocr_result)
+                if not normalized_questions:
+                    error = ocr_result.get("error") if isinstance(ocr_result, dict) else None
+                    raise ValueError(error or "OCR response contains no valid questions")
+                questions.extend(normalized_questions)
 
         except Exception as exc:
+            await require_job_lease(db, job_id, worker_id)
             extraction.status = ExtractionStatus.FAILED.value
             extraction.error = str(exc)
             await db.commit()
             await db.refresh(extraction)
             raise
 
+        await require_job_lease(db, job_id, worker_id)
         extraction.status = ExtractionStatus.DONE.value
         extraction.raw_json = {"questions": questions}
-        await db.commit()
-        await db.refresh(extraction)
+        await db.flush()
         return extraction
 
 

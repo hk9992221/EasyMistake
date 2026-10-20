@@ -57,10 +57,10 @@ export const extractionsApi = {
   /**
    * 将草稿题目正式入库
    */
-  confirmQuestions: async (id: string, questions: DraftQuestion[]) => {
-    const response = await apiClient.post<{ questions: Question[] }>(
+  confirmQuestions: async (id: string, questions: Array<Partial<Question> & Pick<Question, 'type'>>) => {
+    const response = await apiClient.post<Question[]>(
       `/extractions/${id}/questions`,
-      { questions }
+      questions
     )
     return response.data
   },

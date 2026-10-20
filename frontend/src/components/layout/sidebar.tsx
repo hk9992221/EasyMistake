@@ -29,6 +29,11 @@ export function Sidebar() {
       icon: BookOpen,
     },
     {
+      title: '识别记录',
+      href: '/dashboard/extractions',
+      icon: History,
+    },
+    {
       title: '试题',
       href: '/dashboard/questions',
       icon: FileText,

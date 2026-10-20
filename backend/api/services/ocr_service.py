@@ -39,10 +39,17 @@ SYSTEM_PROMPT = """\
 
 class OCRService:
     def __init__(self) -> None:
-        self._client = OpenAI(
-            api_key=settings.OPENAI_API_KEY,
-            base_url=settings.OPENAI_BASE_URL,
-        )
+        self._client = None
+
+    def _get_client(self):
+        if self._client is None:
+            self._client = OpenAI(
+                api_key=settings.OPENAI_API_KEY,
+                base_url=settings.OPENAI_BASE_URL,
+                timeout=settings.OCR_REQUEST_TIMEOUT_SECONDS,
+                max_retries=0,
+            )
+        return self._client
 
     def _recognize_sync(self, image_bytes: bytes, mime: str, model_name: str) -> Dict[str, Any]:
         started = time.perf_counter()
@@ -55,7 +62,7 @@ class OCRService:
         }
 
         try:
-            completion = self._client.chat.completions.create(
+            completion = self._get_client().chat.completions.create(
                 model=model_name,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},

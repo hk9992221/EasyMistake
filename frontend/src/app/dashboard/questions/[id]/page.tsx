@@ -1,4 +1,6 @@
-﻿'use client'
+'use client'
+
+import { invalidateLearning } from '@/lib/api/invalidate-learning'
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -289,7 +291,7 @@ export default function QuestionDetailPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['question', questionId] })
-      queryClient.invalidateQueries({ queryKey: ['questions'] })
+      invalidateLearning(queryClient)
       setIsEditingStem(false)
       toast({
         title: 'Saved',
@@ -334,7 +336,7 @@ export default function QuestionDetailPage() {
       questionsApi.update(questionId, { appendix: appendix.trim() || null }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['question', questionId] })
-      queryClient.invalidateQueries({ queryKey: ['questions'] })
+      invalidateLearning(queryClient)
       setIsEditingAppendix(false)
       toast({
         title: '已保存',
@@ -365,7 +367,7 @@ export default function QuestionDetailPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['question', questionId] })
-      queryClient.invalidateQueries({ queryKey: ['questions'] })
+      invalidateLearning(queryClient)
       setIsEditingMetadata(false)
       toast({
         title: '已保存',
@@ -393,8 +395,7 @@ export default function QuestionDetailPage() {
             : undefined,
       } as any),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['attempts', questionId] })
-      queryClient.invalidateQueries({ queryKey: ['question-progress', questionId] })
+      invalidateLearning(queryClient)
       toast({
         title: 'Recorded',
         description: 'Attempt saved.',
@@ -412,7 +413,7 @@ export default function QuestionDetailPage() {
   const deleteQuestionMutation = useMutation({
     mutationFn: () => questionsApi.delete(questionId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['questions'] })
+      invalidateLearning(queryClient)
       toast({
         title: '已删除',
         description: '试题已成功删除',

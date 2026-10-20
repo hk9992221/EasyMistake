@@ -16,7 +16,7 @@ export function SessionTimeoutProvider({ children }: { children: React.ReactNode
 
   const lastActivityRef = useRef<Date>(new Date())
   const warningShownRef = useRef(false)
-  const timeoutRef = useRef<NodeJS.Timeout>()
+  const timeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
 
   // 更新最后活动时间
   const updateActivity = useCallback(() => {
