@@ -336,6 +336,7 @@ export interface QuestionProgress {
 export interface AnalyticsOverview {
   total_questions: number
   mistake_questions: number
+  unmastered_mistake_questions: number
   mastered_questions: number
   due_today: number
   overdue: number

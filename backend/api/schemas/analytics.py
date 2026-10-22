@@ -4,6 +4,7 @@ from api.schemas.common import BaseSchema
 class AnalyticsOverviewResponse(BaseSchema):
     total_questions: int
     mistake_questions: int
+    unmastered_mistake_questions: int
     mastered_questions: int
     due_today: int
     overdue: int

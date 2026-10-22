@@ -14,6 +14,7 @@ from api.schemas.paper_set import (
     PaperSetItemUpdate,
     PaperSetItemResponse,
     PaperSetPreviewResponse,
+    PaperSetReviewDataResponse,
     BatchUpsertPaperSetRequest,
 )
 from api.schemas.common import PaginatedResponse
@@ -320,3 +321,14 @@ async def preview_paper_set(
 ):
     is_admin = current_user.role == UserRole.ADMIN
     return await paper_set_service.preview_paper_set(db, paper_set_id, current_user.id, is_admin=is_admin)
+
+
+@router.get("/{paper_set_id}/review-data", response_model=PaperSetReviewDataResponse)
+async def get_paper_set_review_data(
+    paper_set_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await paper_set_service.review_data(
+        db, paper_set_id, current_user.id, is_admin=current_user.role == UserRole.ADMIN,
+    )

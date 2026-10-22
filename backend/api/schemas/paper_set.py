@@ -3,6 +3,8 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pydantic import Field
 from api.models.paper_set import OutputFormat
+from api.schemas.attempt import AttemptResponse
+from api.schemas.question_progress import QuestionProgressResponse
 from api.schemas.common import BaseSchema
 
 
@@ -89,6 +91,11 @@ class PaperSetPreviewResponse(BaseSchema):
     description: Optional[str]
     output_format: OutputFormat
     questions: List[PreviewQuestion]
+
+
+class PaperSetReviewDataResponse(BaseSchema):
+    attempts: Dict[str, List[AttemptResponse]]
+    progress: Dict[str, QuestionProgressResponse]
 
 
 class BatchUpsertPaperSetItem(BaseSchema):

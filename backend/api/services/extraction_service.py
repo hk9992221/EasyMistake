@@ -212,12 +212,19 @@ class ExtractionService:
         ).with_for_update().execution_options(populate_existing=True))).scalar_one()
         if extraction.status == ExtractionStatus.DONE.value:
             return extraction
-        active = (await db.execute(select(Job.id).where(
+        active = (await db.execute(select(Job).where(
             Job.type == JobType.EXTRACTION.value,
             Job.payload["extraction_id"].as_string() == str(extraction.id),
             Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
         ).limit(1))).scalar_one_or_none()
         if active is not None:
+            if active.status == JobStatus.PENDING.value and extraction.status == ExtractionStatus.FAILED.value:
+                # Legacy OCR ran in the request while its queued job stayed pending.
+                # Reusing that job is safe only after the user explicitly retries.
+                extraction.status = ExtractionStatus.PENDING.value
+                extraction.error = None
+                await db.commit()
+                await db.refresh(extraction)
             return extraction
         extraction.status = ExtractionStatus.PENDING.value
         extraction.error = None

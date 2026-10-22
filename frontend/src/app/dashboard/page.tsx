@@ -48,7 +48,7 @@ export default function DashboardPage() {
 
   const stats = {
     totalMistakes: analyticsOverview?.mistake_questions ?? 0,
-    unmasteredMistakes: (analyticsOverview?.mistake_questions ?? 0) - (analyticsOverview?.mastered_questions ?? 0),
+    unmasteredMistakes: analyticsOverview?.unmastered_mistake_questions ?? 0,
     dueToday: analyticsOverview?.due_today ?? reviewToday?.items?.length ?? 0,
     tokenUsage: costStats?.total_tokens ?? 0,
     cost: costStats?.total_cost_cny ?? costStats?.total_cost_usd ?? 0,

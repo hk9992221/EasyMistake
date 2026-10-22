@@ -107,11 +107,17 @@ class AttemptService:
         update_data = attempt_data.model_dump(exclude_unset=True)
         if "error_tags" in update_data:
             update_data["error_tags_json"] = update_data.pop("error_tags") or []
+        affects_progress = any(
+            field in {"result", "duration_sec", "submitted_at", "error_tags_json"}
+            and getattr(attempt, field) != value
+            for field, value in update_data.items()
+        )
         for field, value in update_data.items():
             setattr(attempt, field, value)
 
         await db.flush()
-        await question_progress_service.rebuild_progress(db, attempt.user_id, attempt.question_id)
+        if affects_progress:
+            await question_progress_service.rebuild_progress(db, attempt.user_id, attempt.question_id)
         await db.commit()
         await db.refresh(attempt)
         return attempt

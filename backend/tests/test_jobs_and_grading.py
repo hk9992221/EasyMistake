@@ -81,6 +81,40 @@ async def test_completed_extraction_does_not_call_ocr_again(db, users, monkeypat
     recognize.assert_not_called()
 
 
+@pytest.mark.parametrize('previous_status', ['FAILED', 'RUNNING'])
+async def test_old_pending_job_never_replays_non_pending_extraction(db, users, monkeypatch, previous_status):
+    extraction = await create_extraction(db, users[0].id)
+    extraction.status = previous_status
+    extraction.error = 'Previously failed' if previous_status == 'FAILED' else None
+    await db.commit()
+    recognize = AsyncMock(side_effect=AssertionError('legacy request repeated'))
+    monkeypatch.setattr(ocr_service, 'recognize', recognize)
+
+    job = await fetch_next_job(db, 'test-worker', SUPPORTED_JOB_TYPES)
+    await ExportWorker('test-worker').process_job(db, job)
+
+    await db.refresh(extraction)
+    await db.refresh(job)
+    assert extraction.status == job.status == 'FAILED'
+    assert extraction.error == ('Previously failed' if previous_status == 'FAILED'
+                                else 'Extraction requires an explicit retry')
+    assert job.last_error == extraction.error
+    recognize.assert_not_called()
+
+
+async def test_old_failed_extraction_can_be_retried_before_worker_picks_job(db, users, client):
+    extraction = await create_extraction(db, users[0].id)
+    extraction.status = 'FAILED'
+    extraction.error = 'Previously failed'
+    await db.commit()
+
+    response = await client.post(f'/api/v1/extractions/{extraction.id}/retry')
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'PENDING'
+    assert response.json()['error'] is None
+    assert await db.scalar(select(func.count()).select_from(Job)) == 1
+
+
 async def test_worker_interruption_is_visible_and_explicitly_retryable(db, users):
     extraction = await create_extraction(db, users[0].id)
     job = await fetch_next_job(db, 'dead-worker', SUPPORTED_JOB_TYPES)
