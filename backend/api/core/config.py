@@ -1,4 +1,5 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 from typing import List
 import json
 
@@ -24,6 +25,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str
     OPENAI_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
+    OCR_REQUEST_TIMEOUT_SECONDS: float = Field(120, gt=0)
+    JOB_LEASE_TIMEOUT_SECONDS: int = Field(300, ge=30)
+    JOB_HEARTBEAT_SECONDS: float = Field(15, gt=0, le=30)
+
     # Environment
     ENVIRONMENT: str = "development"
     SQL_ECHO: bool = False
@@ -46,9 +51,7 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> List[str]:
         return json.loads(self.CORS_ORIGINS)
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
 
 settings = Settings()

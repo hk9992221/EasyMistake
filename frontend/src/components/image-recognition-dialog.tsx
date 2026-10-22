@@ -1,6 +1,7 @@
-﻿'use client'
+'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import {
   Dialog,
   DialogContent,
@@ -126,6 +127,12 @@ export function ImageRecognitionDialog({
   const [error, setError] = useState<string | null>(null)
   const [clipboardError, setClipboardError] = useState<string | null>(null)
   const [internalModel, setInternalModel] = useState('qwen3-vl-flash')
+  const generation = useRef(0)
+  useEffect(() => {
+    if (!open) generation.current += 1
+    return () => { generation.current += 1 }
+  }, [open])
+  useEffect(() => () => { imagePreviews.forEach((preview) => URL.revokeObjectURL(preview.url)) }, [imagePreviews])
   const activeModel = selectedModel || internalModel
   const handleModelChange = (value: string) => {
     if (onSelectedModelChange) onSelectedModelChange(value)
@@ -133,6 +140,8 @@ export function ImageRecognitionDialog({
   }
 
   const processFiles = async (files: File[]) => {
+    const currentGeneration = ++generation.current
+    if (files.length > 20) { setError("每次最多识别 20 张图片"); setStep("error"); return }
     try {
       setStep('processing')
       setError(null)
@@ -149,6 +158,10 @@ export function ImageRecognitionDialog({
         })
 
         const image = await imagesApi.upload(file)
+        if (currentGeneration !== generation.current) {
+          newPreviews.forEach((preview) => URL.revokeObjectURL(preview.url))
+          return
+        }
         newImageIds.push(image.id)
       }
 
@@ -157,10 +170,11 @@ export function ImageRecognitionDialog({
 
       if (newImageIds.length > 0) {
         const { extraction_id } = await extractionsApi.create(newImageIds, activeModel)
-        await extractionsApi.retry(extraction_id)
-        await pollForResult(extraction_id, newImageIds)
+        if (currentGeneration !== generation.current) return
+        await pollForResult(extraction_id, newImageIds, currentGeneration)
       }
     } catch (err) {
+      if (currentGeneration !== generation.current) return
       setError(err instanceof Error ? err.message : '识别失败，请重试')
       setStep('error')
     }
@@ -180,16 +194,19 @@ export function ImageRecognitionDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, autoFiles, step])
 
-  const pollForResult = async (extractionId: string, imageIds: string[]) => {
-    const maxAttempts = 60
+  const pollForResult = async (extractionId: string, imageIds: string[], currentGeneration: number) => {
+    const maxAttempts = 300
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
+        if (currentGeneration !== generation.current) return
         const extraction = await extractionsApi.get(extractionId)
+        if (currentGeneration !== generation.current) return
         const status = String((extraction as any)?.status || '').toUpperCase()
 
         if (status === 'DONE' || status === 'COMPLETED') {
           const draftResponse = await extractionsApi.getDraftQuestions(extractionId)
+          if (currentGeneration !== generation.current) return
           const firstQuestion = draftResponse.questions?.[0] as any
 
           if (!firstQuestion) {
@@ -205,6 +222,7 @@ export function ImageRecognitionDialog({
 
           setStep('success')
           setTimeout(() => {
+            if (currentGeneration !== generation.current) return
             onRecognized({
               subject: '',
               type: inferredType,
@@ -232,13 +250,15 @@ export function ImageRecognitionDialog({
 
         await new Promise((resolve) => setTimeout(resolve, 1000))
       } catch {
-        setError('获取识别结果失败，请重试')
+        if (currentGeneration !== generation.current) return
+        setError('获取识别结果失败，请到识别记录查看任务状态')
         setStep('error')
         return
       }
     }
 
-    setError('识别超时，请重试')
+    if (currentGeneration !== generation.current) return
+    setError('任务仍在后台处理，请到识别记录查看进度，无需重复上传')
     setStep('error')
   }
 
@@ -294,6 +314,7 @@ export function ImageRecognitionDialog({
   }
 
   const handleRetry = () => {
+    generation.current += 1
     setStep('select')
     setImagePreviews([])
     setUploadedImageIds([])
@@ -302,14 +323,13 @@ export function ImageRecognitionDialog({
   }
 
   const handleClose = () => {
+    generation.current += 1
     onOpenChange(false)
-    setTimeout(() => {
-      setStep('select')
-      setImagePreviews([])
-      setUploadedImageIds([])
-      setError(null)
-      setClipboardError(null)
-    }, 200)
+    setStep('select')
+    setImagePreviews([])
+    setUploadedImageIds([])
+    setError(null)
+    setClipboardError(null)
   }
 
   return (
@@ -326,6 +346,7 @@ export function ImageRecognitionDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          <Link className="text-sm text-primary underline" href="/dashboard/extractions" onClick={handleClose}>查看识别记录</Link>
           {step === 'select' && (
             <>
               {imagePreviews.length > 0 && (
@@ -399,7 +420,7 @@ export function ImageRecognitionDialog({
           {step === 'processing' && (
             <div className="flex flex-col items-center gap-3 py-8">
               <Loader2 className="h-10 w-10 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">正在识别题目内容...</p>
+              <p className="text-sm text-muted-foreground">正在识别题目内容，关闭后任务仍会继续。</p>
               {uploadedImageIds.length > 0 && (
                 <p className="text-xs text-muted-foreground">已上传 {uploadedImageIds.length} 张</p>
               )}

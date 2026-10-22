@@ -1,4 +1,6 @@
-﻿'use client'
+'use client'
+
+import { invalidateLearning } from '@/lib/api/invalidate-learning'
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
@@ -152,9 +154,7 @@ export default function PaperSetReviewPage() {
     mutationFn: (payload: { question_id: string; result: 'CORRECT' | 'WRONG' | 'PARTIAL' | 'SKIPPED'; wrong_reason?: string; note?: string; error_tags?: string[]; source?: string; review_mode?: string }) =>
       attemptsApi.create(payload as any),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['paper-set-review-attempts', paperSetId] })
-      queryClient.invalidateQueries({ queryKey: ['paper-set-review-progress', paperSetId] })
-      queryClient.invalidateQueries({ queryKey: ['attempts'] })
+      invalidateLearning(queryClient)
       setNote('')
       setErrorTagsMap((prev) => ({ ...prev, [currentQuestion.id]: [] }))
       if (currentIndex < questions.length - 1) {

@@ -44,8 +44,7 @@ class ExportService:
         )
 
         db.add(export)
-        await db.commit()
-        await db.refresh(export)
+        await db.flush()
 
         await create_job(
             db,
@@ -55,8 +54,11 @@ class ExportService:
                 "export_id": str(export.id),
                 "format": export_data.format,
             },
+            commit=False,
         )
 
+        await db.commit()
+        await db.refresh(export)
         return export
 
     async def get_export_by_id(self, db: AsyncSession, export_id: UUID) -> Export:

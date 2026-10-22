@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, Integer, Boolean, ForeignKey
+from sqlalchemy import Index, Column, String, Text, Integer, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from api.models.base import BaseModel
@@ -22,6 +22,7 @@ class DifficultyLevel(str, enum.Enum):
 
 class Question(BaseModel):
     __tablename__ = "questions"
+    __table_args__ = (Index("ix_questions_user_deleted_created", "user_id", "is_deleted", "created_at", "id"),)
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     paper_id = Column(UUID(as_uuid=True), ForeignKey("papers.id", ondelete="SET NULL"), nullable=True)

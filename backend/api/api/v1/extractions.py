@@ -89,7 +89,8 @@ async def create_questions_from_extraction(
     created = []
     for question in questions:
         question.from_extraction_id = extraction_id
-        created.append(await question_service.create_question(db, extraction.user_id, question))
+        created.append(await question_service.create_question(db, extraction.user_id, question, commit=False, is_admin=is_admin))
+    await db.commit()
     return created
 
 
@@ -107,4 +108,4 @@ async def retry_extraction(
     if not is_admin and extraction.user_id != current_user.id:
         raise ForbiddenError(detail="You don't have permission to access this extraction")
 
-    return await extraction_service.run_extraction(db, extraction)
+    return await extraction_service.retry_extraction(db, extraction)

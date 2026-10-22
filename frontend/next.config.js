@@ -11,10 +11,6 @@ const nextConfig = {
   },
   // Disable static generation for dynamic routes
   output: 'standalone',
-  experimental: {
-    // Force dynamic rendering
-    forceSwcTransforms: true,
-  },
   async rewrites() {
     const internalApiOrigin = process.env.INTERNAL_API_ORIGIN || 'http://localhost:8000'
     return [

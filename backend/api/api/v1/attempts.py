@@ -22,7 +22,7 @@ async def create_attempt(
 ):
     """记录做题结果"""
     try:
-        attempt = await attempt_service.create_attempt(db, current_user.id, attempt_data)
+        attempt = await attempt_service.create_attempt(db, current_user.id, attempt_data, is_admin=current_user.role == "ADMIN")
         return attempt
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
@@ -35,7 +35,7 @@ async def create_question_attempt(
     current_user: User = Depends(get_current_user),
 ):
     try:
-        attempt = await attempt_service.create_attempt(db, current_user.id, attempt_data)
+        attempt = await attempt_service.create_attempt(db, current_user.id, attempt_data, is_admin=current_user.role == "ADMIN")
         return attempt
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)

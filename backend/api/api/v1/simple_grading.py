@@ -1,21 +1,22 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime
-from pathlib import Path
-from typing import List
-from uuid import uuid4
-
-from fastapi import APIRouter
+from uuid import UUID
+from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from api.core.database import get_db
+from api.core.deps import get_current_user
+from api.models.user import User
+from api.models.grading_record import GradingRecord as GradingRecordModel
+from api.schemas.common import BaseSchema
 
 router = APIRouter(tags=["simple-grading"])
 
-DATA_FILE = Path(__file__).resolve().parents[3] / "data" / "simple_grading_records.json"
 
-
-class GradingRecordCreate(BaseModel):
+class GradingRecordCreate(BaseSchema):
     student_name: str = Field(..., min_length=1, max_length=50)
     paper_name: str = Field(..., min_length=1, max_length=80)
     score: float = Field(..., ge=0, le=150)
@@ -23,28 +24,8 @@ class GradingRecordCreate(BaseModel):
 
 
 class GradingRecord(GradingRecordCreate):
-    id: str
-    created_at: str
-
-
-def _ensure_data_file() -> None:
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if not DATA_FILE.exists():
-        DATA_FILE.write_text("[]", encoding="utf-8")
-
-
-def _load_records() -> List[GradingRecord]:
-    _ensure_data_file()
-    raw = DATA_FILE.read_text(encoding="utf-8")
-    items = json.loads(raw)
-    return [GradingRecord(**item) for item in items]
-
-
-def _save_records(records: List[GradingRecord]) -> None:
-    DATA_FILE.write_text(
-        json.dumps([item.model_dump() for item in records], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    id: UUID
+    created_at: datetime
 
 
 @router.get("/grading", response_class=HTMLResponse)
@@ -150,7 +131,7 @@ async def grading_page() -> str:
   <div class="container">
     <section class="card">
       <h1>简易试卷批改入口</h1>
-      <p class="hint">同一端口提供页面和接口，手机浏览器直接可用。</p>
+      <p class="hint">请登录后提交和查看自己的批改记录。</p>
       <form id="gradingForm">
         <label>学生姓名</label>
         <input id="studentName" placeholder="例如：张三" required />
@@ -198,8 +179,17 @@ async def grading_page() -> str:
       `).join("");
     }
 
+    async function apiFetch(url, options = {}) {
+      const token = localStorage.getItem("access_token") || localStorage.getItem("auth_token");
+      if (!token) { location.assign("/login"); throw new Error("请先登录"); }
+      const resp = await fetch(url, { ...options, headers: { ...options.headers, Authorization: `Bearer ${token}` } });
+      if (resp.status === 401) location.assign("/login");
+      if (!resp.ok) throw new Error("请求失败，请检查输入或重新登录");
+      return resp;
+    }
+
     async function loadRecords() {
-      const resp = await fetch("/api/v1/grading/records");
+      const resp = await apiFetch("/api/v1/grading/records");
       const data = await resp.json();
       renderRecords(data.records || []);
     }
@@ -212,7 +202,10 @@ async def grading_page() -> str:
         score: Number(document.getElementById("score").value),
         comment: document.getElementById("comment").value.trim(),
       };
-      const resp = await fetch("/api/v1/grading/records", {
+      const button = form.querySelector("button");
+      button.disabled = true;
+      try {
+      const resp = await apiFetch("/api/v1/grading/records", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -223,9 +216,11 @@ async def grading_page() -> str:
       }
       form.reset();
       await loadRecords();
+      } catch (error) { alert(error.message); }
+      finally { button.disabled = false; }
     });
 
-    loadRecords();
+    loadRecords().catch((error) => { listEl.textContent = error.message; });
   </script>
 </body>
 </html>
@@ -233,20 +228,16 @@ async def grading_page() -> str:
 
 
 @router.get("/grading/records")
-async def list_grading_records():
-    records = _load_records()
-    records.sort(key=lambda x: x.created_at, reverse=True)
-    return {"records": [item.model_dump() for item in records[:100]]}
+async def list_grading_records(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    records = (await db.execute(select(GradingRecordModel).where(GradingRecordModel.user_id == current_user.id)
+        .order_by(GradingRecordModel.created_at.desc(), GradingRecordModel.id.desc()).limit(100))).scalars().all()
+    return {"records": [GradingRecord.model_validate(item) for item in records]}
 
 
-@router.post("/grading/records")
-async def create_grading_record(payload: GradingRecordCreate):
-    records = _load_records()
-    item = GradingRecord(
-        id=uuid4().hex,
-        created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        **payload.model_dump(),
-    )
-    records.append(item)
-    _save_records(records)
-    return {"record": item.model_dump()}
+@router.post("/grading/records", status_code=201)
+async def create_grading_record(payload: GradingRecordCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    item = GradingRecordModel(user_id=current_user.id, **payload.model_dump())
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return {"record": GradingRecord.model_validate(item)}

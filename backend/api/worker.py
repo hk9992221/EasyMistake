@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """Background worker for processing async export jobs."""
 
 import asyncio
@@ -9,6 +9,7 @@ import shutil
 import sys
 import zipfile
 from datetime import datetime, timedelta
+from contextlib import suppress
 from pathlib import Path
 from typing import Dict, List, Set
 from urllib.parse import quote
@@ -22,14 +23,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from api.core.config import settings
-from api.core.database import get_db
+from api.core.database import get_db, AsyncSessionLocal
 from api.core.datetime_utils import utcnow
-from api.core.jobs import complete_job, fetch_next_job
+from api.core.jobs import complete_job, fetch_next_job, heartbeat_job, recover_stale_jobs, require_job_lease
 from api.core.s3 import s3_client
 from api.models.export import Export, ExportFormat, ExportStatus
 from api.models.export_item import ExportItem
 from api.models.image import Image
-from api.models.job import Job, JobType
+from api.models.job import Job, JobType, JobStatus
+from api.models.extraction import QuestionExtraction
+from api.services.extraction_service import extraction_service
 from api.models.paper_set import PaperSet
 from api.services.export_service import export_service
 
@@ -38,6 +41,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
+SUPPORTED_JOB_TYPES = [JobType.EXPORT, JobType.EXTRACTION]
 
 
 class ExportWorker:
@@ -50,17 +54,56 @@ class ExportWorker:
         self._last_cleanup_at: datetime | None = None
 
     async def process_job(self, db: AsyncSession, job: Job) -> None:
-        logger.info('Processing job %s of type %s', job.id, job.type)
+        job_id, job_type, payload = job.id, job.type, dict(job.payload)
+        heartbeat = asyncio.create_task(self._heartbeat(job_id))
         try:
-            if job.type == JobType.EXPORT.value:
+            await require_job_lease(db, job_id, self.worker_id)
+            if job_type == JobType.EXPORT.value:
                 await self._process_export_job(db, job)
+            elif job_type == JobType.EXTRACTION.value:
+                extraction = await extraction_service.get_extraction(db, UUID(payload["extraction_id"]))
+                if extraction is None:
+                    raise ValueError("Extraction not found")
+                if extraction.status != "DONE":
+                    await extraction_service.run_extraction(db, extraction, job_id, self.worker_id)
+                await require_job_lease(db, job_id, self.worker_id)
+                await complete_job(db, job_id)
             else:
-                await complete_job(db, job.id, success=False, error=f'Unknown job type: {job.type}')
+                raise ValueError(f"Unsupported job type: {job_type}")
         except Exception as exc:
-            logger.exception('Error processing job %s: %s', job.id, exc)
-            await complete_job(db, job.id, success=False, error=str(exc))
+            logger.exception("Error processing job %s", job_id)
+            await db.rollback()
+            current = (await db.execute(select(Job).where(Job.id == job_id).with_for_update())).scalar_one_or_none()
+            if current is not None and current.status == "RUNNING" and current.locked_by == self.worker_id:
+                model, key = (Export, "export_id") if job_type == JobType.EXPORT.value else (QuestionExtraction, "extraction_id")
+                resource = None
+                try:
+                    resource = await db.get(model, UUID(str(payload[key])))
+                except (KeyError, TypeError, ValueError):
+                    pass
+                if resource is not None and resource.status != "DONE":
+                    resource.status = "FAILED"
+                    resource.error = str(exc)
+                    if isinstance(resource, Export):
+                        resource.finished_at = utcnow()
+                await complete_job(db, job_id, success=False, error=str(exc))
+        finally:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
+
+    async def _heartbeat(self, job_id):
+        while True:
+            await asyncio.sleep(settings.JOB_HEARTBEAT_SECONDS)
+            try:
+                async with AsyncSessionLocal() as db:
+                    if not await heartbeat_job(db, job_id, self.worker_id):
+                        return
+            except Exception:
+                logger.exception("Heartbeat failed for job %s", job_id)
 
     async def maintenance_tick(self, db: AsyncSession) -> None:
+        await recover_stale_jobs(db)
         interval = max(settings.EXPORT_CLEANUP_INTERVAL_SECONDS, 0)
         if interval == 0:
             return
@@ -91,7 +134,7 @@ class ExportWorker:
         skipped_count = 0
         for export in exports:
             if export.object_key:
-                deleted = s3_client.delete_file(export.object_key)
+                deleted = await asyncio.to_thread(s3_client.delete_file, export.object_key)
                 if not deleted:
                     skipped_count += 1
                     logger.warning(
@@ -122,9 +165,11 @@ class ExportWorker:
         if not export:
             raise ValueError(f'Export {export_id} not found')
 
-        if export.status != ExportStatus.PENDING.value:
-            logger.warning('Export %s is not pending, skipping', export_id)
+        if export.status == ExportStatus.DONE.value:
+            await complete_job(db, job.id)
             return
+        if export.status != ExportStatus.PENDING.value:
+            raise ValueError(f'Export {export_id} is not pending')
 
         export.status = ExportStatus.RUNNING.value
         await db.commit()
@@ -140,27 +185,22 @@ class ExportWorker:
             file_path, size_bytes, sha256_hash = await self._generate_export(db, export_id, format_type, export_temp_dir)
 
             s3_key = f'exports/{export_id}/{file_path.name}'
-            uploaded = s3_client.upload_file(file_path, s3_key, content_type='application/zip')
+            uploaded = await asyncio.to_thread(s3_client.upload_file, file_path, s3_key, content_type='application/zip')
             if not uploaded:
                 raise RuntimeError('Failed to upload export file to S3')
 
             file_path.unlink(missing_ok=True)
             shutil.rmtree(export_temp_dir, ignore_errors=True)
 
+            await require_job_lease(db, job.id, self.worker_id)
             export.status = ExportStatus.DONE.value
             export.object_key = s3_key
             export.size_bytes = size_bytes
             export.sha256 = sha256_hash
             export.finished_at = utcnow()
-            await db.commit()
-
             await complete_job(db, job.id, success=True)
         except Exception:
             shutil.rmtree(export_temp_dir, ignore_errors=True)
-            export.status = ExportStatus.FAILED.value
-            export.error = 'Export failed'
-            export.finished_at = utcnow()
-            await db.commit()
             raise
 
     async def _generate_export(
@@ -255,7 +295,7 @@ class ExportWorker:
             ext = Path(image.object_key).suffix or '.jpg'
             local_filename = f'{image_id}{ext}'
             local_path = resources_dir / local_filename
-            if s3_client.download_file(image.object_key, local_path):
+            if await asyncio.to_thread(s3_client.download_file, image.object_key, local_path):
                 downloaded[image_id] = local_filename
         return downloaded
 
@@ -570,7 +610,7 @@ async def main_worker_loop(worker_id: str):
         try:
             async for db in get_db():
                 await worker.maintenance_tick(db)
-                job = await fetch_next_job(db, worker_id=worker_id, job_types=[JobType.EXPORT])
+                job = await fetch_next_job(db, worker_id=worker_id, job_types=SUPPORTED_JOB_TYPES)
                 if job:
                     await worker.process_job(db, job)
                 else:

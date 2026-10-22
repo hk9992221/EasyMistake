@@ -9,6 +9,10 @@ from api.models.question import Question
 from api.models.question_image import QuestionImage
 from api.models.image import Image
 from api.models.attempt import Attempt, AttemptResult
+from api.models.question_progress import QuestionProgress
+from api.models.paper import Paper
+from api.models.extraction import QuestionExtraction
+from api.core.access import require_owned_resources
 from api.schemas.question import QuestionCreate, QuestionUpdate, QuestionListParams
 from api.core.exceptions import NotFoundError, ForbiddenError
 
@@ -76,14 +80,19 @@ class QuestionService:
                 )
                 db.add(question_image)
 
-            await db.commit()
+        await db.flush()
 
     async def create_question(
         self,
         db: AsyncSession,
         user_id: UUID,
-        question_data: QuestionCreate
+        question_data: QuestionCreate,
+        commit: bool = True,
+        is_admin: bool = False,
     ) -> Question:
+        await require_owned_resources(db, Image, question_data.stem_image_ids, user_id, is_admin)
+        await require_owned_resources(db, Paper, [question_data.paper_id] if question_data.paper_id else [], user_id, is_admin)
+        await require_owned_resources(db, QuestionExtraction, [question_data.from_extraction_id] if question_data.from_extraction_id else [], user_id, is_admin)
         question = Question(
             user_id=user_id,
             paper_id=question_data.paper_id,
@@ -106,13 +115,15 @@ class QuestionService:
         )
 
         db.add(question)
-        await db.commit()
-        await db.refresh(question)
+        await db.flush()
 
         # 处理题干图片
         if question_data.stem_image_ids:
             await self._update_question_images(db, question.id, question_data.stem_image_ids)
 
+        if commit:
+            await db.commit()
+            await db.refresh(question)
         return question
 
     async def get_question_by_id(
@@ -147,7 +158,8 @@ class QuestionService:
 
         # 处理题干图片更新
         if "stem_image_ids" in update_data:
-            image_ids = update_data.pop("stem_image_ids")
+            image_ids = update_data.pop("stem_image_ids") or []
+            await require_owned_resources(db, Image, image_ids, user_id, is_admin)
             await self._update_question_images(db, question_id, image_ids)
 
         for field, value in update_data.items():
@@ -257,6 +269,13 @@ class QuestionService:
         if params.end_date:
             conditions.append(Question.created_at <= params.end_date)
 
+        score = func.coalesce(select(QuestionProgress.proficiency_score).where(
+            QuestionProgress.question_id == Question.id, QuestionProgress.user_id == user_id,
+        ).correlate(Question).scalar_subquery(), 0)
+        if params.proficiency_min is not None:
+            conditions.append(score >= params.proficiency_min)
+        if params.proficiency_max is not None:
+            conditions.append(score <= params.proficiency_max)
         conditions.append(Question.is_deleted.is_(False))
 
         query = select(Question).where(and_(*conditions))
@@ -265,7 +284,7 @@ class QuestionService:
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
 
-        query = query.offset(skip).limit(limit)
+        query = query.order_by(Question.created_at.desc(), Question.id.desc()).offset(skip).limit(limit)
         result = await db.execute(query)
         questions = result.scalars().all()
 

@@ -18,7 +18,7 @@ from api.core.error_codes import ErrorCode
 from api.core.database import get_db
 from api.core.jobs import fetch_next_job
 from api.models.job import JobType
-from api.worker import ExportWorker
+from api.worker import ExportWorker, SUPPORTED_JOB_TYPES
 from api.api.v1 import (
     auth,
     questions,
@@ -46,7 +46,7 @@ async def _embedded_export_worker_loop(worker_id: str):
         try:
             async for db in get_db():
                 await worker.maintenance_tick(db)
-                job = await fetch_next_job(db, worker_id=worker_id, job_types=[JobType.EXPORT])
+                job = await fetch_next_job(db, worker_id=worker_id, job_types=SUPPORTED_JOB_TYPES)
                 if job:
                     await worker.process_job(db, job)
                 else:

@@ -23,6 +23,8 @@ export const questionsApi = {
     if (filters.difficulty) params.append('difficulty', filters.difficulty)
     if (filters.knowledge_point_q) params.append('knowledge_point_q', filters.knowledge_point_q)
     if (filters.q) params.append('q', filters.q)
+    if (filters.proficiency_min !== undefined) params.append('proficiency_min', String(filters.proficiency_min))
+    if (filters.proficiency_max !== undefined) params.append('proficiency_max', String(filters.proficiency_max))
     if (filters.start_date) params.append('start_date', filters.start_date)
     if (filters.end_date) params.append('end_date', filters.end_date)
     if (filters.sortBy) params.append('sort_by', filters.sortBy)

@@ -1,6 +1,7 @@
-﻿'use client'
+'use client'
 
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -15,7 +16,7 @@ import {
 } from '@/components/ui/select'
 import { Search, Filter, Plus } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { questionsApi, questionProgressApi } from '@/lib/api'
+import { questionsApi } from '@/lib/api'
 import { LatexContent } from '@/components/latex-content'
 import { QuickFilterBar, QuickFilterData } from '@/components/quick-filter-bar'
 import { getQuestionTypeLabel } from '@/lib/question-type'
@@ -39,92 +40,38 @@ export default function QuestionsPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
 
-  const { data: questionsData, isLoading } = useQuery({
+  const debouncedFilters = useDebouncedValue(filters)
+  const { data: questionsData, isLoading, isError } = useQuery({
     queryKey: [
       'questions',
       currentPage,
       pageSize,
-      filters,
+      debouncedFilters,
     ],
     queryFn: () =>
       questionsApi.list({
+        proficiency_min: debouncedFilters.masteryLevel === 'high' ? 81 : undefined,
+        proficiency_max: debouncedFilters.masteryLevel === 'low' ? 60
+          : debouncedFilters.masteryLevel === 'medium' ? 80
+          : debouncedFilters.masteryLevel === 'custom' ? Math.max(0, Math.min(100, parseInt(debouncedFilters.customMastery) || 0))
+          : undefined,
         page: currentPage,
         pageSize,
-        q: filters.searchQuery || undefined,
-        question_no: filters.questionNo || undefined,
-        subject: filters.subject || undefined,
-        tags_json: filters.selectedTags.length > 0 ? filters.selectedTags : undefined,
-        knowledge_point_q: filters.knowledgePointRegex || undefined,
-        difficulty: filters.difficulty !== 'all' ? filters.difficulty : undefined,
-        type: filters.type !== 'all' ? filters.type : undefined,
-        book_name: filters.bookName || undefined,
-        chapter_name: filters.chapterName || undefined,
-        start_date: filters.startDate ? `${filters.startDate}T00:00:00` : undefined,
-        end_date: filters.endDate ? `${filters.endDate}T23:59:59` : undefined,
+        q: debouncedFilters.searchQuery || undefined,
+        question_no: debouncedFilters.questionNo || undefined,
+        subject: debouncedFilters.subject || undefined,
+        tags_json: debouncedFilters.selectedTags.length > 0 ? debouncedFilters.selectedTags : undefined,
+        knowledge_point_q: debouncedFilters.knowledgePointRegex || undefined,
+        difficulty: debouncedFilters.difficulty !== 'all' ? debouncedFilters.difficulty : undefined,
+        type: debouncedFilters.type !== 'all' ? debouncedFilters.type : undefined,
+        book_name: debouncedFilters.bookName || undefined,
+        chapter_name: debouncedFilters.chapterName || undefined,
+        start_date: debouncedFilters.startDate ? `${debouncedFilters.startDate}T00:00:00` : undefined,
+        end_date: debouncedFilters.endDate ? `${debouncedFilters.endDate}T23:59:59` : undefined,
       }),
   })
 
-  // 获取学习进度用于计算掌握度
-  const questionsFromApi = questionsData?.items || []
-  const questionIds = questionsFromApi.map((q: any) => q.id)
-
-  const { data: progressData = [] } = useQuery<Array<{ questionId: string; progress: any | null }>>({
-    queryKey: ['question-progress', 'bulk', questionIds],
-    queryFn: async () => {
-      if (questionIds.length === 0) return []
-      const progressPromises = questionIds.map((id: string) =>
-        questionProgressApi.list({ page: 1, pageSize: 1, questionId: id }).catch((err) => {
-          console.error(`Failed to fetch progress for question ${id}:`, err)
-          return { items: [] as any[] }
-        })
-      )
-      const results = await Promise.all(progressPromises)
-      return questionIds.map((id: string, index: number) => ({
-        questionId: id,
-        progress: results[index]?.items?.[0] || null,
-      }))
-    },
-    enabled: questionIds.length > 0,
-  })
-
-  // 计算掌握度并筛选
-  const { questions: filteredQuestions, masteryMap } = useMemo(() => {
-    const map = new Map<string, number>()
-    const filtered: any[] = []
-
-    // 初始化所有题目的掌握度为0
-    questionsFromApi.forEach((question: any) => {
-      map.set(question.id, 0)
-    })
-
-    // 从progress数据计算掌握度
-    progressData?.forEach(({ questionId, progress }: any) => {
-      if (!progress) {
-        map.set(questionId, 0)
-        return
-      }
-      map.set(questionId, Number(progress.proficiency_score || 0))
-    })
-
-    questionsFromApi.forEach((question: any) => {
-      const mastery = map.get(question.id) ?? 0
-
-      // 掌握度筛选
-      if (filters.masteryLevel !== 'all') {
-        if (filters.masteryLevel === 'low' && mastery > 60) return
-        if (filters.masteryLevel === 'medium' && mastery > 80) return
-        if (filters.masteryLevel === 'high' && mastery <= 80) return
-        if (filters.masteryLevel === 'custom') {
-          const threshold = parseInt(filters.customMastery) || 0
-          if (mastery > threshold) return
-        }
-      }
-
-      filtered.push(question)
-    })
-
-    return { questions: filtered, masteryMap: map }
-  }, [questionsFromApi, progressData, filters.masteryLevel, filters.customMastery])
+  const filteredQuestions = questionsData?.items || []
 
   const totalPages = questionsData?.total_pages || questionsData?.totalPages || 1
 
@@ -147,7 +94,7 @@ export default function QuestionsPage() {
               {(filters.masteryLevel !== 'all' || filters.startDate || filters.endDate) && (
                 <div className="flex justify-between">
                   <span>筛选后</span>
-                  <span className="font-medium">{filteredQuestions.length}</span>
+                  <span className="font-medium">{questionsData?.total || 0}</span>
                 </div>
               )}
             </div>
@@ -172,18 +119,20 @@ export default function QuestionsPage() {
           </div>
 
           {/* 快速筛选栏 */}
-          <QuickFilterBar filters={filters} onChange={setFilters} />
+          <QuickFilterBar filters={filters} onChange={(next) => { setFilters(next); setCurrentPage(1) }} />
 
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <div className="text-muted-foreground">加载中...</div>
             </div>
+          ) : isError ? (
+            <p role="alert" className="py-12 text-center text-destructive">题目加载失败，请刷新后重试。</p>
           ) : filteredQuestions.length === 0 ? (
             <Card>
               <CardContent className="py-12">
                 <div className="text-center">
                   <p className="text-muted-foreground">
-                    {questionsFromApi.length === 0 ? '暂无试题' : '没有符合筛选条件的试题'}
+                    暂无符合条件的试题
                   </p>
                   <Link href="/dashboard/extract" className="mt-4 inline-block">
                     <Button>录入第一道试题</Button>
@@ -194,7 +143,7 @@ export default function QuestionsPage() {
           ) : (
             <div className="space-y-4">
               {filteredQuestions.map((question: any) => {
-                const mastery = masteryMap.get(question.id) ?? 0
+                const mastery = question.proficiency_score ?? 0
                 return (
                   <Card key={question.id} className="hover:shadow-md transition-shadow">
                     <CardHeader>

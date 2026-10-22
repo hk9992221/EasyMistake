@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.core.datetime_utils import utcnow
 from api.core.exceptions import NotFoundError, ForbiddenError
 from api.models.attempt import Attempt, AttemptResult
+from api.models.question import Question
+from api.core.access import require_question_access
 from api.models.question_progress import QuestionProgress
 from api.schemas.question_progress import QuestionProgressUpdate
 
@@ -13,7 +15,8 @@ REVIEW_INTERVAL_DAYS = [1, 2, 4, 7, 15, 30]
 
 
 class QuestionProgressService:
-    async def create_progress(self, db: AsyncSession, user_id: UUID, question_id: UUID) -> QuestionProgress:
+    async def create_progress(self, db: AsyncSession, user_id: UUID, question_id: UUID, is_admin: bool = False) -> QuestionProgress:
+        await require_question_access(db, question_id, user_id, is_admin)
         progress = await self.get_or_create_progress(db, user_id, question_id)
         await db.commit()
         await db.refresh(progress)
@@ -49,7 +52,7 @@ class QuestionProgressService:
         return REVIEW_INTERVAL_DAYS[idx]
 
     def _calculate_new_score(self, progress: QuestionProgress, attempt: Attempt) -> int:
-        score = progress.proficiency_score or 50
+        score = progress.proficiency_score if progress.proficiency_score is not None else 50
         if attempt.result == AttemptResult.CORRECT:
             score += 10
             if progress.consecutive_correct >= 2:
@@ -86,20 +89,36 @@ class QuestionProgressService:
             progress.consecutive_correct = 0
             progress.review_stage = max(0, progress.review_stage - 1)
 
-    async def apply_attempt(self, db: AsyncSession, user_id: UUID, attempt: Attempt) -> QuestionProgress:
-        progress = await self.get_or_create_progress(db, user_id, attempt.question_id)
+    def _apply_to_progress(self, progress: QuestionProgress, attempt: Attempt) -> None:
         self._update_counts(progress, attempt)
-
         progress.last_result = attempt.result
         progress.last_reviewed_at = attempt.submitted_at or attempt.occurred_at
         progress.proficiency_score = self._calculate_new_score(progress, attempt)
         progress.mastery_level = self._calc_mastery_level(progress.proficiency_score)
         progress.is_mastered = progress.mastery_level >= 3 and progress.consecutive_correct >= 3
+        progress.next_review_at = progress.last_reviewed_at + timedelta(days=self._next_interval_days(progress.review_stage))
 
-        interval_days = self._next_interval_days(progress.review_stage)
-        progress.next_review_at = utcnow() + timedelta(days=interval_days)
+    async def rebuild_progress(self, db: AsyncSession, user_id: UUID, question_id: UUID) -> QuestionProgress:
+        """Replay in a deterministic order; callers hold the question row lock."""
+        progress = await self.get_or_create_progress(db, user_id, question_id)
+        for field in ("total_attempts", "wrong_attempts", "correct_attempts", "consecutive_correct", "review_stage"):
+            setattr(progress, field, 0)
+        progress.proficiency_score = 50
+        progress.mastery_level = 1
+        progress.is_mastered = False
+        progress.last_result = None
+        progress.last_reviewed_at = None
+        progress.next_review_at = progress.created_at
+        attempts = (await db.execute(select(Attempt).where(
+            Attempt.user_id == user_id, Attempt.question_id == question_id,
+        ).order_by(Attempt.submitted_at, Attempt.occurred_at, Attempt.created_at, Attempt.id))).scalars().all()
+        for attempt in attempts:
+            self._apply_to_progress(progress, attempt)
         await db.flush()
         return progress
+
+    async def apply_attempt(self, db: AsyncSession, user_id: UUID, attempt: Attempt) -> QuestionProgress:
+        return await self.rebuild_progress(db, user_id, attempt.question_id)
 
     async def list_progress(
         self,
@@ -110,8 +129,8 @@ class QuestionProgressService:
         question_id: UUID | None = None,
         due_only: bool = False,
     ) -> tuple[list[QuestionProgress], int]:
-        query = select(QuestionProgress).where(QuestionProgress.user_id == user_id)
-        count_query = select(func.count()).select_from(QuestionProgress).where(QuestionProgress.user_id == user_id)
+        query = select(QuestionProgress).join(Question).where(QuestionProgress.user_id == user_id, Question.is_deleted.is_(False))
+        count_query = select(func.count()).select_from(QuestionProgress).join(Question).where(QuestionProgress.user_id == user_id, Question.is_deleted.is_(False))
         if question_id:
             query = query.where(QuestionProgress.question_id == question_id)
             count_query = count_query.where(QuestionProgress.question_id == question_id)

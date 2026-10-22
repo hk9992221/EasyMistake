@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, Integer, ForeignKey, DateTime
+from sqlalchemy import Index, Column, String, Text, Integer, ForeignKey, DateTime
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from api.models.base import BaseModel
@@ -21,6 +21,7 @@ class JobStatus(str, enum.Enum):
 
 class Job(BaseModel):
     __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_status_run_after", "status", "run_after"), Index("ix_jobs_status_locked_at", "status", "locked_at"),)
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     type = Column(String(32), nullable=False)

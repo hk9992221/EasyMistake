@@ -1,7 +1,7 @@
 from collections import Counter, defaultdict
 from datetime import timedelta
 from uuid import UUID
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.core.datetime_utils import local_day_bounds_utc, utcnow
 from api.models.attempt import Attempt, AttemptResult
@@ -19,7 +19,7 @@ class AnalyticsService:
 
         mistake_questions = (
             await db.execute(
-                select(func.count(func.distinct(Attempt.question_id))).where(
+                select(func.count(func.distinct(Attempt.question_id))).join(Question).where(Question.is_deleted.is_(False),
                     Attempt.user_id == user_id, Attempt.result == AttemptResult.WRONG
                 )
             )
@@ -27,7 +27,7 @@ class AnalyticsService:
 
         mastered_questions = (
             await db.execute(
-                select(func.count()).select_from(QuestionProgress).where(
+                select(func.count()).select_from(QuestionProgress).join(Question).where(Question.is_deleted.is_(False),
                     QuestionProgress.user_id == user_id, QuestionProgress.is_mastered == True
                 )
             )
@@ -36,7 +36,7 @@ class AnalyticsService:
         start_of_day_utc, end_of_day_utc = local_day_bounds_utc()
         due_today = (
             await db.execute(
-                select(func.count()).select_from(QuestionProgress).where(
+                select(func.count()).select_from(QuestionProgress).join(Question).where(Question.is_deleted.is_(False),
                     QuestionProgress.user_id == user_id,
                     QuestionProgress.next_review_at <= end_of_day_utc,
                 )
@@ -45,7 +45,7 @@ class AnalyticsService:
 
         overdue = (
             await db.execute(
-                select(func.count()).select_from(QuestionProgress).where(
+                select(func.count()).select_from(QuestionProgress).join(Question).where(Question.is_deleted.is_(False),
                     QuestionProgress.user_id == user_id,
                     QuestionProgress.next_review_at < start_of_day_utc,
                 )
@@ -67,17 +67,14 @@ class AnalyticsService:
 
     async def _accuracy(self, db: AsyncSession, user_id: UUID, days: int) -> float:
         since = utcnow() - timedelta(days=days)
-        result = await db.execute(
-            select(Attempt.result).where(Attempt.user_id == user_id, Attempt.submitted_at >= since)
-        )
-        values = [row[0] for row in result.all()]
-        if not values:
-            return 0.0
-        correct = sum(1 for x in values if x == AttemptResult.CORRECT)
-        return correct / len(values)
+        total, correct = (await db.execute(select(
+            func.count(Attempt.id), func.sum(case((Attempt.result == AttemptResult.CORRECT, 1), else_=0)),
+        ).join(Question).where(Attempt.user_id == user_id, Attempt.submitted_at >= since,
+                              Question.is_deleted.is_(False)))).one()
+        return correct / total if total else 0.0
 
     async def error_tags(self, db: AsyncSession, user_id: UUID, top: int = 20) -> dict:
-        result = await db.execute(select(Attempt.error_tags_json).where(Attempt.user_id == user_id))
+        result = await db.execute(select(Attempt.error_tags_json).join(Question).where(Attempt.user_id == user_id, Question.is_deleted.is_(False)))
         counter: Counter[str] = Counter()
         for row in result.all():
             for tag in row[0] or []:
@@ -88,7 +85,7 @@ class AnalyticsService:
     async def mastery_distribution(self, db: AsyncSession, user_id: UUID) -> dict:
         result = await db.execute(
             select(QuestionProgress.mastery_level, func.count())
-            .where(QuestionProgress.user_id == user_id)
+            .join(Question).where(QuestionProgress.user_id == user_id, Question.is_deleted.is_(False))
             .group_by(QuestionProgress.mastery_level)
             .order_by(QuestionProgress.mastery_level.asc())
         )
@@ -120,7 +117,7 @@ class AnalyticsService:
         since = utcnow() - timedelta(days=days)
         result = await db.execute(
             select(Attempt.question_id, Attempt.result)
-            .where(Attempt.user_id == user_id, Attempt.source == "review", Attempt.submitted_at >= since)
+            .join(Question).where(Question.is_deleted.is_(False),Attempt.user_id == user_id, Attempt.source == "review", Attempt.submitted_at >= since)
             .order_by(Attempt.submitted_at.asc())
         )
         seen = set()

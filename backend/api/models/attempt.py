@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime, Integer
+from sqlalchemy import Index, Column, String, Text, ForeignKey, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from api.models.base import BaseModel
@@ -15,6 +15,7 @@ class AttemptResult(str, enum.Enum):
 
 class Attempt(BaseModel):
     __tablename__ = "attempts"
+    __table_args__ = (Index("ix_attempts_user_question_submitted", "user_id", "question_id", "submitted_at"),)
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     question_id = Column(UUID(as_uuid=True), ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)

@@ -1,5 +1,6 @@
 # Import all models for Alembic autogenerate
 from api.models.base import Base, BaseModel
+from api.models.grading_record import GradingRecord
 from api.models.user import User, UserRole
 from api.models.invite import Invite
 from api.models.image import Image

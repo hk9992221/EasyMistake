@@ -54,7 +54,7 @@ async def create_question_progress(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    progress = await question_progress_service.create_progress(db, current_user.id, payload.question_id)
+    progress = await question_progress_service.create_progress(db, current_user.id, payload.question_id, is_admin=current_user.role == "ADMIN")
     return progress
 
 

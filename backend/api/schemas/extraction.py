@@ -11,7 +11,7 @@ class ExtractionBase(BaseSchema):
 
 
 class ExtractionCreate(ExtractionBase):
-    image_ids: List[UUID] = Field(..., min_items=1)
+    image_ids: List[UUID] = Field(..., min_length=1, max_length=20)
     model_name: Optional[str] = "qwen3-vl-flash"
     params: Dict[str, Any] = Field(default_factory=dict)
 
