@@ -82,6 +82,16 @@ export const questionsApi = {
     await apiClient.delete(`/questions/${id}`)
   },
 
+  trash: async (page = 1, pageSize = 20) => {
+    const response = await apiClient.get<PaginatedResponse<Question>>(`/questions/trash?page=${page}&page_size=${pageSize}`)
+    return response.data
+  },
+
+  restore: async (id: string) => {
+    const response = await apiClient.post<Question>(`/questions/${id}/restore`)
+    return response.data
+  },
+
   /**
    * 批量删除题目
    */

@@ -69,8 +69,8 @@ export const authApi = {
   /**
    * 获取当前用户信息
    */
-  getCurrentUser: async () => {
-    const response = await apiClient.get<User>('/auth/me')
+  getCurrentUser: async (signal?: AbortSignal) => {
+    const response = await apiClient.get<User>('/auth/me', { signal })
     return response.data
   },
 

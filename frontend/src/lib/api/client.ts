@@ -53,7 +53,9 @@ class ApiClient {
           const status = error.response.status
 
           // 处理 401 未授权错误
-          if (status === 401) {
+          const currentToken = useAuthStore.getState().token
+          // A late failure from the previous account must not log out the new one.
+          if (status === 401 && currentToken && error.config?.headers?.Authorization === `Bearer ${currentToken}`) {
             // 使用 Zustand store 清除认证状态
             useAuthStore.getState().clearAuth()
             if (typeof window !== 'undefined') {

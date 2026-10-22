@@ -10,6 +10,7 @@ class JobType(str, enum.Enum):
     EXTRACTION = "EXTRACTION"
     ANSWER_GENERATION = "ANSWER_GENERATION"
     EXPORT = "EXPORT"
+    IMAGE_CLEANUP = "IMAGE_CLEANUP"
 
 
 class JobStatus(str, enum.Enum):

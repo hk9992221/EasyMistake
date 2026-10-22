@@ -23,6 +23,7 @@ export function MainLayout({ children }: MainLayoutProps) {
     { title: '录题', href: '/dashboard/extract' },
     { title: '试题', href: '/dashboard/questions' },
     { title: '组卷', href: '/dashboard/paper-sets' },
+    { title: '回收站', href: '/dashboard/trash' },
   ]
 
   if (isAdmin) {

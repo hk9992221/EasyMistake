@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ImageBase(BaseModel):
@@ -12,9 +12,9 @@ class ImageBase(BaseModel):
     height: Optional[int] = None
 
 
-class ImageCreate(ImageBase):
-    object_key: str
-    storage_url: Optional[str] = None
+class ImageCreate(BaseModel):
+    # Metadata is derived from the stored bytes, never trusted from the client.
+    object_key: str = Field(min_length=1, max_length=512)
 
 
 class ImageUpdate(BaseModel):
@@ -43,3 +43,4 @@ class UploadUrlResponse(BaseModel):
 class ImageUploadUrlRequest(BaseModel):
     filename: str
     content_type: str
+    size_bytes: int = Field(gt=0)

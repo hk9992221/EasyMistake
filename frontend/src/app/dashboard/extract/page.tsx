@@ -7,6 +7,8 @@ import { questionsApi, imagesApi } from '@/lib/api'
 import type { AnswerUpdateRequest } from '@/lib/api/answers'
 import { useToast } from '@/lib/hooks/use-toast'
 import { parseLabels } from '@/lib/label-parser'
+import { questionDraft } from '@/lib/question-draft'
+import { useAuthStore } from '@/lib/store/auth'
 import { ImageRecognitionDialog } from '@/components/image-recognition-dialog'
 import { LatexContent } from '@/components/latex-content'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -83,11 +85,7 @@ function normalizeOptions(contentJson: unknown): OptionItem[] {
     .filter((item: OptionItem | null): item is OptionItem => Boolean(item))
 }
 
-export default function ExtractPage() {
-  const router = useRouter()
-  const { toast } = useToast()
-
-  const [formData, setFormData] = useState<FormData>({
+const emptyForm = (): FormData => ({
     subject: '',
     type: '',
     difficulty: '',
@@ -107,6 +105,24 @@ export default function ExtractPage() {
     contentJson: {},
   })
 
+type QuestionDraft = {
+  version: 1
+  form: FormData
+  tagInput: string
+  knowledgePointInput: string
+  includeRecognizedStemImages: boolean
+  stemUploadIds: Array<string | null>
+  answerUploadIds: Array<string | null>
+  pendingSave: { payload: string; requestId: string } | null
+}
+
+export default function ExtractPage() {
+  const router = useRouter()
+  const { toast } = useToast()
+
+  const accountId = useAuthStore((state) => state.user?.id)
+  const [formData, setFormData] = useState<FormData>(emptyForm)
+
   const [tagInput, setTagInput] = useState('')
   const [knowledgePointInput, setKnowledgePointInput] = useState('')
   const [includeRecognizedStemImages, setIncludeRecognizedStemImages] = useState(false)
@@ -124,12 +140,125 @@ export default function ExtractPage() {
   const [copiedPrompt, setCopiedPrompt] = useState(false)
   const [autoExamplePrefix, setAutoExamplePrefix] = useState(false)
   const uploadedFiles = useRef(new WeakMap<File, Promise<string>>())
+  const uploadedImageIds = useRef(new WeakMap<File, string>())
   const pendingSave = useRef<{ payload: string; requestId: string } | null>(null)
+  const questionSaved = useRef(false)
+  const [draftReady, setDraftReady] = useState(false)
+  const [draftStatus, setDraftStatus] = useState('正在读取草稿…')
+  const draftReadyRef = useRef(false)
+  draftReadyRef.current = draftReady
+  const latestDraft = useRef({ form: formData, tagInput, knowledgePointInput, includeRecognizedStemImages })
+  latestDraft.current = { form: formData, tagInput, knowledgePointInput, includeRecognizedStemImages }
+  const hasDraftContent = Boolean(tagInput || knowledgePointInput || Object.entries(formData).some(([key, value]) => {
+    if (key === 'options') return formData.options.some((option) => option.text)
+    if (Array.isArray(value)) return value.length > 0
+    if (typeof value === 'object') return Object.keys(value).length > 0
+    return Boolean(value)
+  }))
+  const hasDraftRef = useRef(false)
+  hasDraftRef.current = hasDraftContent
+
+  const persistDraft = async () => {
+    if (!accountId || questionSaved.current || !draftReadyRef.current || !hasDraftRef.current) return
+    const current = latestDraft.current
+    const draft: QuestionDraft = {
+      version: 1, ...current,
+      stemUploadIds: current.form.stemImages.map((file) => uploadedImageIds.current.get(file) ?? null),
+      answerUploadIds: current.form.answerImages.map((file) => uploadedImageIds.current.get(file) ?? null),
+      pendingSave: pendingSave.current,
+    }
+    await questionDraft.save(accountId, draft)
+  }
+
+  useEffect(() => {
+    if (!accountId) return
+    let active = true
+    void questionDraft.read<QuestionDraft>(accountId).then((draft) => {
+      if (!active) return
+      if (draft) {
+        if (draft.version !== 1 || !draft.form) throw new Error('Invalid draft')
+        const restoreFiles = (files: File[], ids: Array<string | null>) => files.map((file, index) => {
+          if (!(file instanceof Blob)) throw new Error('Invalid draft image')
+          const restored = new File([file], file.name || 'image', { type: file.type, lastModified: file.lastModified })
+          if (ids[index]) {
+            uploadedImageIds.current.set(restored, ids[index]!)
+            uploadedFiles.current.set(restored, Promise.resolve(ids[index]!))
+          }
+          return restored
+        })
+        const restored = { ...emptyForm(), ...draft.form,
+          stemImages: restoreFiles(draft.form.stemImages, draft.stemUploadIds),
+          answerImages: restoreFiles(draft.form.answerImages, draft.answerUploadIds),
+        }
+        setFormData(restored)
+        setTagInput(draft.tagInput)
+        setKnowledgePointInput(draft.knowledgePointInput)
+        setIncludeRecognizedStemImages(draft.includeRecognizedStemImages)
+        pendingSave.current = draft.pendingSave
+        setDraftStatus('已恢复上次草稿，包含所选图片')
+      } else setDraftStatus('填写后会自动保存草稿')
+      setDraftReady(true)
+    }).catch(() => {
+      if (active) {
+        setDraftStatus('草稿读取失败，仍可录题；请勿刷新未保存的内容')
+        setDraftReady(true)
+      }
+    })
+    return () => { active = false }
+  }, [accountId])
+
+  useEffect(() => {
+    if (!draftReady || !hasDraftContent || questionSaved.current) return
+    let active = true
+    setDraftStatus('正在保存草稿…')
+    const timer = window.setTimeout(() => {
+      void persistDraft().then(() => { if (active) setDraftStatus('草稿已自动保存，刷新后可恢复文字和图片') })
+        .catch(() => { if (active) setDraftStatus('草稿保存失败，请先保存试题再离开页面') })
+    }, 500)
+    return () => { active = false; window.clearTimeout(timer) }
+  }, [formData, tagInput, knowledgePointInput, includeRecognizedStemImages, draftReady, hasDraftContent])
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!questionSaved.current && hasDraftRef.current) {
+        event.preventDefault()
+        event.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => {
+      window.removeEventListener('beforeunload', warn)
+      void persistDraft().catch(() => undefined)
+    }
+  }, [accountId])
+
+  const discardDraft = async () => {
+    if (!accountId || !window.confirm('清空当前草稿及所选图片？')) return
+    questionSaved.current = true
+    try {
+      await questionDraft.remove(accountId)
+      setFormData(emptyForm())
+      setTagInput('')
+      setKnowledgePointInput('')
+      setIncludeRecognizedStemImages(false)
+      pendingSave.current = null
+      uploadedFiles.current = new WeakMap()
+      uploadedImageIds.current = new WeakMap()
+      setDraftStatus('草稿已清空')
+    } catch {
+      toast({ title: '清空草稿失败', variant: 'destructive' })
+    } finally {
+      questionSaved.current = false
+    }
+  }
 
   const uploadOnce = (file: File): Promise<string> => {
     const cached = uploadedFiles.current.get(file)
     if (cached) return cached
-    const upload = imagesApi.upload(file).then((image) => image.id).catch((error) => {
+    const upload = imagesApi.upload(file).then((image) => {
+      uploadedImageIds.current.set(file, image.id)
+      return image.id
+    }).catch((error) => {
       uploadedFiles.current.delete(file)
       throw error
     })
@@ -214,7 +343,7 @@ export default function ExtractPage() {
         appendix: formData.appendix || null,
         content_json: contentJson,
         paper_meta: {},
-        tags_json: formData.tags,
+        tags_json: Array.from(new Set([...formData.tags, ...parseLabels(tagInput)])),
         knowledge_points_json: finalKnowledgePoints,
         book_name: formData.bookName || null,
         chapter_name: formData.chapterName || null,
@@ -234,14 +363,19 @@ export default function ExtractPage() {
       if (pendingSave.current?.payload !== payload) {
         pendingSave.current = { payload, requestId: crypto.randomUUID() }
       }
+      // Persist upload IDs and the request ID before sending, for a reload after a lost response.
+      await persistDraft().catch(() => setDraftStatus('草稿保存失败，请勿刷新页面'))
       return questionsApi.createWithAnswer({
         request_id: pendingSave.current.requestId,
         question,
         answer,
       })
     },
-    onSuccess: () => {
-      toast({ title: '成功', description: '试题录入成功' })
+    onSuccess: async () => {
+      questionSaved.current = true
+      let cleared = true
+      if (accountId) await questionDraft.remove(accountId).catch(() => { cleared = false })
+      toast({ title: '成功', description: cleared ? '试题录入成功' : '试题已保存，但本机草稿未能清理，请手动清空草稿' })
       router.push('/dashboard/questions')
     },
     onError: (error: any) => {
@@ -400,14 +534,19 @@ export default function ExtractPage() {
           <Button variant="outline" onClick={() => router.push('/dashboard/questions')}>
             取消
           </Button>
-          <Button onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>
+          <Button onClick={() => createMutation.mutate()} disabled={createMutation.isPending || !draftReady}>
             <Save className="mr-2 h-4 w-4" />
             {createMutation.isPending ? '保存中...' : '保存试题'}
           </Button>
         </div>
       </div>
 
-      <div className="mx-auto max-w-4xl space-y-6">
+      <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border bg-muted/40 px-4 py-3">
+        <p role="status" className="text-sm text-muted-foreground">{draftStatus}</p>
+        <Button variant="ghost" size="sm" onClick={discardDraft} disabled={!draftReady || createMutation.isPending}>清空草稿</Button>
+      </div>
+
+      <fieldset disabled={createMutation.isPending || !draftReady} className="mx-auto max-w-4xl space-y-6 disabled:pointer-events-none">
         <Card>
           <CardHeader>
             <CardTitle>基本信息</CardTitle>
@@ -882,7 +1021,7 @@ export default function ExtractPage() {
             </div>
           </CardContent>
         </Card>
-      </div>
+      </fieldset>
 
       <ImageRecognitionDialog
         open={showImageDialog}

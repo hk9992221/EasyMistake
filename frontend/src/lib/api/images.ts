@@ -31,10 +31,11 @@ export const imagesApi = {
   /**
    * 获取上传 URL
    */
-  getUploadUrl: async (filename: string, contentType: string) => {
+  getUploadUrl: async (filename: string, contentType: string, sizeBytes: number) => {
     const response = await apiClient.post<{ upload_url: string; object_key: string }>('/images/upload-url', {
       filename,
       content_type: contentType,
+      size_bytes: sizeBytes,
     })
     return response.data
   },

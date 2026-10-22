@@ -33,6 +33,7 @@ from api.models.image import Image
 from api.models.job import Job, JobType, JobStatus
 from api.models.extraction import QuestionExtraction
 from api.services.extraction_service import extraction_service
+from api.services.image_service import image_service
 from api.models.paper_set import PaperSet
 from api.services.export_service import export_service
 
@@ -41,7 +42,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
-SUPPORTED_JOB_TYPES = [JobType.EXPORT, JobType.EXTRACTION]
+SUPPORTED_JOB_TYPES = [JobType.EXPORT, JobType.EXTRACTION, JobType.IMAGE_CLEANUP]
 
 
 class ExportWorker:
@@ -60,6 +61,13 @@ class ExportWorker:
             await require_job_lease(db, job_id, self.worker_id)
             if job_type == JobType.EXPORT.value:
                 await self._process_export_job(db, job)
+            elif job_type == JobType.IMAGE_CLEANUP.value:
+                object_key = payload["object_key"]
+                if await db.scalar(select(Image.id).where(Image.object_key == object_key)):
+                    raise ValueError("Image cleanup still has a live image record")
+                await asyncio.to_thread(image_service.delete_image_bytes, object_key)
+                await require_job_lease(db, job_id, self.worker_id)
+                await complete_job(db, job_id)
             elif job_type == JobType.EXTRACTION.value:
                 extraction = await extraction_service.get_extraction(db, UUID(payload["extraction_id"]))
                 if extraction is None:
@@ -84,6 +92,14 @@ class ExportWorker:
             await db.rollback()
             current = (await db.execute(select(Job).where(Job.id == job_id).with_for_update())).scalar_one_or_none()
             if current is not None and current.status == "RUNNING" and current.locked_by == self.worker_id:
+                if job_type == JobType.IMAGE_CLEANUP.value:
+                    current.status = "PENDING"
+                    current.run_after = utcnow() + timedelta(seconds=min(60 * 2 ** min(current.attempts, 6), 3600))
+                    current.last_error = "文件清理暂时失败，将自动重试"
+                    current.locked_at = None
+                    current.locked_by = None
+                    await db.commit()
+                    return
                 model, key = (Export, "export_id") if job_type == JobType.EXPORT.value else (QuestionExtraction, "extraction_id")
                 resource = None
                 try:

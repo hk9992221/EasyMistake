@@ -250,6 +250,37 @@ async def list_questions(
     )
 
 
+@router.get("/trash", response_model=PaginatedResponse[QuestionResponse])
+async def list_deleted_questions(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    questions, total = await question_service.list_deleted_questions(
+        db, current_user.id, skip=(page - 1) * page_size, limit=page_size,
+        is_admin=current_user.role == UserRole.ADMIN,
+    )
+    return PaginatedResponse(
+        items=await _serialize_question_list(db, questions, current_user.id, request),
+        total=total, page=page, page_size=page_size, total_pages=(total + page_size - 1) // page_size,
+    )
+
+
+@router.post("/{question_id}/restore", response_model=QuestionResponse)
+async def restore_question(
+    question_id: UUID,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    question = await question_service.restore_question(
+        db, question_id, current_user.id, is_admin=current_user.role == UserRole.ADMIN,
+    )
+    return await _serialize_question_with_images(db, question, request)
+
+
 @router.get("/{question_id}", response_model=QuestionResponse)
 async def get_question(
     question_id: UUID,

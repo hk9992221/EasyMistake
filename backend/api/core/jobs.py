@@ -140,10 +140,17 @@ async def recover_stale_jobs(db):
     cutoff = utcnow() - timedelta(seconds=settings.JOB_LEASE_TIMEOUT_SECONDS)
     jobs = (await db.execute(select(Job).where(
         Job.status == JobStatus.RUNNING.value,
-        Job.type.in_([JobType.EXPORT.value, JobType.EXTRACTION.value]),
+        Job.type.in_([JobType.EXPORT.value, JobType.EXTRACTION.value, JobType.IMAGE_CLEANUP.value]),
         or_(Job.locked_at < cutoff, and_(Job.locked_at.is_(None), Job.updated_at < cutoff)),
     ).with_for_update(skip_locked=True).limit(100))).scalars().all()
     for job in jobs:
+        if job.type == JobType.IMAGE_CLEANUP.value:
+            # Object deletion is idempotent and can safely resume after a crash.
+            job.status = JobStatus.PENDING.value
+            job.run_after = utcnow()
+            job.locked_at = None
+            job.locked_by = None
+            continue
         model, key = (Export, "export_id") if job.type == JobType.EXPORT.value else (QuestionExtraction, "extraction_id")
         resource = None
         try:

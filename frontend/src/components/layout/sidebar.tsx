@@ -14,7 +14,8 @@ import {
   LayoutDashboard,
   Users,
   FileQuestion,
-  History
+  History,
+  Trash2
 } from 'lucide-react'
 
 export function Sidebar() {
@@ -47,6 +48,11 @@ export function Sidebar() {
       title: '今日复习',
       href: '/dashboard/reviews',
       icon: CalendarClock,
+    },
+    {
+      title: '回收站',
+      href: '/dashboard/trash',
+      icon: Trash2,
     },
   ]
 

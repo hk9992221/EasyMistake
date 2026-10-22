@@ -2,9 +2,15 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useAuthStore } from '@/lib/store/auth'
 
 export function QueryProvider({ children }: { children: React.ReactNode }) {
+  const accountId = useAuthStore((state) => state.user?.id ?? 'anonymous')
+  return <AccountQueryProvider key={accountId} accountId={accountId}>{children}</AccountQueryProvider>
+}
+
+function AccountQueryProvider({ children, accountId }: { children: React.ReactNode; accountId: string }) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -16,6 +22,12 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
         },
       })
   )
+
+  useEffect(() => () => {
+    if ((useAuthStore.getState().user?.id ?? 'anonymous') !== accountId) {
+      void queryClient.cancelQueries().then(() => queryClient.clear())
+    }
+  }, [queryClient, accountId])
 
   return (
     <QueryClientProvider client={queryClient}>

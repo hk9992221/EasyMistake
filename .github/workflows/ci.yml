@@ -64,3 +64,5 @@ jobs:
       - run: npm ci
       - run: npm run type-check
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

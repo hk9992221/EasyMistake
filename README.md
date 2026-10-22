@@ -141,6 +141,14 @@ python -m api.scripts.import_grading --file data/simple_grading_records.json --u
 
 图片文件接口 `/api/v1/images/{id}/file` 只接受 `Authorization: Bearer ...` 请求头，不再接受 URL 中的登录令牌。前端按图片 ID 获取 Blob 并展示，复用内存中的图片请求；服务端返回 `private, no-store` 缓存策略。此次升级需同时更新前后端，并完成数据库迁移；自行调用图片接口的客户端也需改用请求头。
 
+图片上传会检查真实格式、完整性和像素，支持 PNG、JPEG、WebP 和静态 GIF。默认上限为 20 MiB、4000 万像素，可用 `IMAGE_MAX_UPLOAD_BYTES`、`IMAGE_MAX_PIXELS` 调整。直传接口仍为 `/images/upload`；自行使用 `/images/upload-url` 时须提供 `filename`、`content_type`、`size_bytes`，签名会绑定文件长度。登记接口 `/images` 只接受当前账号的 `uploads/` 临时对象，服务器验证实际字节后复制到独立图片路径，忽略客户端自报的元数据。
+
+被题目、答案或识别记录引用的图片不能删除。未被引用的图片会先在同一事务中删除数据库记录并创建 `IMAGE_CLEANUP` 任务，再由 Worker 清理文件；存储故障会退避重试，Worker 中断也可恢复。部署时须更新并运行 Worker，关闭自动启动时应启动上文的独立 Worker。对象存储可为 `uploads/` 临时前缀设置过期清理规则，清理上传后未登记的文件。
+
+录题草稿按账号保存在当前浏览器中，包含文字、所选图片、已上传图片编号和提交编号；刷新后自动恢复，成功录入后清除。草稿不跨设备同步，清理浏览器站点数据会删除草稿。退出或切换账号时页面缓存会重建，之前账号的请求结果不能覆盖新账号。
+
+删除题目后可在“回收站”恢复，或点击删除提示中的“撤销”。`GET /questions/trash` 支持分页；`POST /questions/{id}/restore` 可重复调用，保留原有图片、答案与复习进度。普通账号只能查看和恢复自己的题目，管理员可以管理全部题目。此次更新无新增数据库迁移，但需要安装更新后的后端依赖并同步发布前后端和 Worker。
+
 ## 验证
 
 ```bash
@@ -152,6 +160,8 @@ python -m pytest -q
 本地默认使用隔离的 SQLite 数据库；设置 `TEST_DATABASE_URL=postgresql+asyncpg://...` 可使用 PostgreSQL，每个测试创建临时 schema。CI 使用 PostgreSQL 16，执行全量迁移、迁移回滚再升级和同一组测试。OCR 和 S3 在测试中使用替身，不调用付费服务。
 
 前端验证：`cd frontend && npm ci && npm run type-check && npm run build`。
+
+浏览器回归：在前端构建后执行 `npx playwright install --with-deps chromium && npm run test:e2e`，覆盖草稿刷新与提交重试、账号缓存隔离、答案图片类型和回收站恢复。测试使用模拟 API，不访问真实账号或对象存储。
 
 后端运行依赖锁定在 `requirements.lock.txt`，更新方式：`uv pip compile requirements.txt --universal --python-version 3.11 --no-annotate -o requirements.lock.txt`。
 

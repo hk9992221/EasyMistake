@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from api.core.database import get_db
+from api.core.config import settings
 from api.core.deps import get_current_user
 from api.models.user import User, UserRole
 from api.models.image import Image
@@ -32,6 +33,7 @@ async def create_upload_url(
         current_user.id,
         payload.filename,
         payload.content_type,
+        payload.size_bytes,
     )
     return UploadUrlResponse(upload_url=upload_url, object_key=object_key)
 
@@ -52,7 +54,7 @@ async def upload_image(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    file_bytes = await file.read()
+    file_bytes = await file.read(settings.IMAGE_MAX_UPLOAD_BYTES + 1)
     return await image_service.create_image_from_upload(
         db,
         current_user.id,
@@ -92,7 +94,7 @@ async def delete_image(
 ):
     is_admin = current_user.role == UserRole.ADMIN
     await image_service.delete_image(db, image_id, current_user.id, is_admin=is_admin)
-    return {"message": "Image deleted successfully"}
+    return {"message": "图片记录已删除，文件清理已加入后台队列"}
 
 
 @router.get("/{image_id}/file", response_class=Response)

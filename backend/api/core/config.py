@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     S3_SECRET_KEY: str
     S3_BUCKET: str
     S3_REGION: str = "cn-east-1"
+    IMAGE_MAX_UPLOAD_BYTES: int = Field(20 * 1024 * 1024, ge=1)
+    IMAGE_MAX_PIXELS: int = Field(40_000_000, ge=1)
 
     # AI / OCR
     OPENAI_API_KEY: str

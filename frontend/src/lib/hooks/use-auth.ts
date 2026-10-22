@@ -67,18 +67,22 @@ export const useAuth = () => {
   // 退出登录
   const logoutMutation = useMutation({
     mutationFn: authApi.logout,
-    onSuccess: () => {
-      clearAuth()
-      router.push('/login')
+    onSettled: () => {
+      if (useAuthStore.getState().token === token) {
+        clearAuth()
+        router.push('/login')
+      }
     },
   })
 
   // 获取当前用户信息
   const { refetch: refetchUser } = useQuery({
-    queryKey: ['currentUser'],
-    queryFn: async () => {
-      const data = await authApi.getCurrentUser()
-      updateUser(data)
+    queryKey: ['currentUser', user?.id],
+    queryFn: async ({ signal }) => {
+      const data = await authApi.getCurrentUser(signal)
+      if (useAuthStore.getState().token === token && data.id === user?.id) {
+        updateUser(data)
+      }
       return data
     },
     enabled: isAuthenticated,
@@ -89,8 +93,8 @@ export const useAuth = () => {
     user,
     token,
     isAuthenticated,
-    login: loginMutation.mutate,
-    register: registerMutation.mutate,
+    login: loginMutation.mutateAsync,
+    register: registerMutation.mutateAsync,
     logout: () => logoutMutation.mutate(),
     refetchUser,
     isLoading: loginMutation.isPending || registerMutation.isPending || !isInitialized,

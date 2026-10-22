@@ -217,7 +217,8 @@ class QuestionService:
         user_id: UUID,
         is_admin: bool = False
     ) -> None:
-        question = await self.get_question_by_id(db, question_id, include_deleted=True)
+        question = (await db.execute(select(Question).where(Question.id == question_id)
+                    .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
         if not question or question.is_deleted:
             raise NotFoundError(detail="Question not found")
 
@@ -226,6 +227,28 @@ class QuestionService:
 
         question.is_deleted = True
         await db.commit()
+
+    async def list_deleted_questions(self, db, user_id, skip=0, limit=20, is_admin=False):
+        conditions = [Question.is_deleted.is_(True)]
+        if not is_admin:
+            conditions.append(Question.user_id == user_id)
+        total = await db.scalar(select(func.count()).select_from(Question).where(*conditions))
+        questions = (await db.execute(select(Question).where(*conditions)
+            .order_by(Question.updated_at.desc(), Question.id.desc()).offset(skip).limit(limit))).scalars().all()
+        return list(questions), total
+
+    async def restore_question(self, db, question_id, user_id, is_admin=False):
+        question = (await db.execute(select(Question).where(Question.id == question_id)
+                    .with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+        if question is None:
+            raise NotFoundError(detail="Question not found")
+        if not is_admin and question.user_id != user_id:
+            raise ForbiddenError(detail="You don't have permission to restore this question")
+        if question.is_deleted:
+            question.is_deleted = False
+        await db.commit()
+        await db.refresh(question)
+        return question
 
     async def list_questions(
         self,

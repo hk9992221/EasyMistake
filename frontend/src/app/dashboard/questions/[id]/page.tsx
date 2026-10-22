@@ -6,6 +6,7 @@ import { invalidateLearning } from '@/lib/api/invalidate-learning'
 export const dynamic = 'force-dynamic'
 
 import { AuthenticatedImage } from '@/components/authenticated-image'
+import { ToastAction } from '@/components/ui/toast'
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -312,8 +313,7 @@ export default function QuestionDetailPage() {
     mutationFn: (answerText: string) =>
       answersApi.update(questionId, {
         answer_text: answerText.trim() ? answerText : null,
-        answer_type:
-          (answerText.trim() ? 'TEXT' : 'NONE') as 'TEXT' | 'NONE',
+        answer_type: resolveAnswerType(answerText, answer?.images?.length ?? 0),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['answer', questionId] })
@@ -417,7 +417,14 @@ export default function QuestionDetailPage() {
       invalidateLearning(queryClient)
       toast({
         title: '已删除',
-        description: '试题已成功删除',
+        description: '试题已移到回收站',
+        action: <ToastAction altText="撤销删除" onClick={() => {
+          void questionsApi.restore(questionId).then(() => {
+            invalidateLearning(queryClient)
+            void queryClient.invalidateQueries({ queryKey: ['questions-trash'] })
+            toast({ title: '已恢复题目' })
+          }).catch((error) => toast({ title: '恢复失败', description: error?.message, variant: 'destructive' }))
+        }}>撤销</ToastAction>,
       })
       setShowDeleteDialog(false)
       router.push('/dashboard/questions')
@@ -1267,7 +1274,7 @@ export default function QuestionDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card role="region" aria-label="答案">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>答案</CardTitle>
@@ -1491,7 +1498,7 @@ export default function QuestionDetailPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>确认删除试题</AlertDialogTitle>
             <AlertDialogDescription>
-              此操作将删除该试题，删除后无法恢复。确定要继续吗？
+              试题将移到回收站，之后可恢复题目、答案和做题记录。确定要继续吗？
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
