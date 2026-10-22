@@ -14,6 +14,8 @@ EasyMistake 是一个面向错题管理与试题整理的全栈项目，支持�
 - AI 识别辅助录入（OCR + 结构化提取）
 - 组卷与导出（Markdown / LaTeX ZIP）
 - 今日复习、错因统计、基础数据看板
+- 复习队列按学科筛选与分页，批量展示题干、图片、答案及解析
+- 一键生成当前学科的全部待复习题目组卷，按账号、日期与学科复用
 - 管理端（用户、题目、组卷、API 日志）
 
 ## 技术栈
@@ -128,6 +130,10 @@ python -m api.scripts.import_grading --file data/simple_grading_records.json --u
 ```
 
 历史作答的熟练度如有偏差，登录后调用 `POST /api/v1/reviews/recalculate`，将按作答顺序重算当前用户的进度，保留自我评价。
+
+`GET /api/v1/reviews/today` 和 `/reviews/queue` 支持 `page`、`page_size`（1–100）、`subject` 和 `include_details`，返回真实总数及分页信息。开启详情后批量获取当前页的题干、题干图片、答案和解析，不再逐题请求；今日范围按 `APP_TIMEZONE` 计算。
+
+`POST /api/v1/reviews/daily-paper-set` 接收 `{}` 或 `{"subject":"数学"}`，在一个事务内按当前到期队列生成或更新组卷，包含全部匹配题目，不受当前分页影响。同账号、同一天、同学科的重复请求复用已有自动组卷；保留仍在卷中的题目分值与分组，不覆盖仅仅同名的手动组卷。生成成功后可继续创建 LaTeX 导出任务；导出未完成时可到组卷的导出历史下载。
 
 ## 验证
 

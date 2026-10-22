@@ -8,14 +8,31 @@ export interface ReviewCompletePayload {
   note?: string
 }
 
+export interface ReviewQueueParams {
+  page?: number
+  page_size?: number
+  subject?: string
+  include_details?: boolean
+}
+
 export const reviewsApi = {
-  getToday: async () => {
-    const response = await apiClient.get<ReviewQueueResponse>('/reviews/today')
+  getToday: async (params?: ReviewQueueParams) => {
+    const response = await apiClient.get<ReviewQueueResponse>('/reviews/today', { params })
     return response.data
   },
 
-  getQueue: async () => {
-    const response = await apiClient.get<ReviewQueueResponse>('/reviews/queue')
+  getQueue: async (params?: ReviewQueueParams) => {
+    const response = await apiClient.get<ReviewQueueResponse>('/reviews/queue', { params })
+    return response.data
+  },
+
+  generateDailyPaperSet: async (subject?: string) => {
+    const response = await apiClient.post<{
+      paper_set_id: string
+      title: string
+      item_count: number
+      reused: boolean
+    }>('/reviews/daily-paper-set', { subject })
     return response.data
   },
 

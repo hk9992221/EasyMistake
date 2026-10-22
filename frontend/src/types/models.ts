@@ -357,9 +357,16 @@ export interface ReviewQueueItem {
   review_stage: number
   next_review_at?: string | null
   proficiency_score: number
+  question?: Question | null
+  answer?: Answer | null
 }
 
 export interface ReviewQueueResponse {
   date: string
   items: ReviewQueueItem[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+  subjects: string[]
 }
