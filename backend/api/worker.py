@@ -64,8 +64,17 @@ class ExportWorker:
                 extraction = await extraction_service.get_extraction(db, UUID(payload["extraction_id"]))
                 if extraction is None:
                     raise ValueError("Extraction not found")
-                if extraction.status != "DONE":
+                if extraction.status == "PENDING":
                     await extraction_service.run_extraction(db, extraction, job_id, self.worker_id)
+                elif extraction.status != "DONE":
+                    # Older releases left OCR jobs pending even after a synchronous
+                    # extraction failed. Never replay a potentially billed request.
+                    error = extraction.error or "Extraction requires an explicit retry"
+                    extraction.status = "FAILED"
+                    extraction.error = error
+                    await require_job_lease(db, job_id, self.worker_id)
+                    await complete_job(db, job_id, success=False, error=error)
+                    return
                 await require_job_lease(db, job_id, self.worker_id)
                 await complete_job(db, job_id)
             else:

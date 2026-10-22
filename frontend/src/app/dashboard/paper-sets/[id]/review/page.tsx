@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { answersApi, attemptsApi, paperSetsApi, questionProgressApi } from '@/lib/api'
+import { answersApi, attemptsApi, paperSetsApi } from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -98,7 +98,6 @@ export default function PaperSetReviewPage() {
 
   const questions = previewData?.questions || []
   const currentQuestion = questions[currentIndex]
-  const questionIds = useMemo(() => questions.map((q: any) => q.id), [questions])
 
   useEffect(() => {
     if (questions.length === 0) return
@@ -110,33 +109,13 @@ export default function PaperSetReviewPage() {
     setCurrentIndex(clamped)
   }, [questions.length, searchParams])
 
-  const { data: attemptsMap = {}, isFetching: isFetchingAttempts } = useQuery({
-    queryKey: ['paper-set-review-attempts', paperSetId, questionIds.join(',')],
-    enabled: questionIds.length > 0,
-    queryFn: async () => {
-      const entries = await Promise.all(
-        questionIds.map(async (id: string) => {
-          const attempts = await attemptsApi.getByQuestionId(id)
-          return [id, attempts] as const
-        }),
-      )
-      return Object.fromEntries(entries)
-    },
+  const { data: reviewData, isFetching: isFetchingReviewData } = useQuery({
+    queryKey: ['paper-set-review-data', paperSetId],
+    enabled: questions.length > 0,
+    queryFn: () => paperSetsApi.reviewData(paperSetId),
   })
-
-  const { data: progressMap = {}, isFetching: isFetchingProgress } = useQuery({
-    queryKey: ['paper-set-review-progress', paperSetId, questionIds.join(',')],
-    enabled: questionIds.length > 0,
-    queryFn: async () => {
-      const entries = await Promise.all(
-        questionIds.map(async (id: string) => {
-          const progressResp = await questionProgressApi.list({ page: 1, pageSize: 1, questionId: id })
-          return [id, progressResp.items?.[0] || null] as const
-        }),
-      )
-      return Object.fromEntries(entries)
-    },
-  })
+  const attemptsMap = reviewData?.attempts || {}
+  const progressMap = reviewData?.progress || {}
 
   const { data: currentAnswer } = useQuery({
     queryKey: ['paper-set-review-answer', currentQuestion?.id],
@@ -483,7 +462,7 @@ export default function PaperSetReviewPage() {
           </div>
           <div className="mt-2 text-sm text-muted-foreground">
             已掌握题目: {totalStats.masteredCount}/{questions.length}
-            {isFetchingAttempts || isFetchingProgress ? '（统计刷新中）' : ''}
+            {isFetchingReviewData ? '（统计刷新中）' : ''}
           </div>
         </CardContent>
       </Card>

@@ -232,7 +232,6 @@ export default function PaperSetDetailPage() {
               <SelectContent>
                 <SelectItem value="MARKDOWN_ZIP">Markdown</SelectItem>
                 <SelectItem value="LATEX_ZIP">LaTeX</SelectItem>
-                <SelectItem value="PDF">PDF</SelectItem>
               </SelectContent>
             </Select>
             <Link href={`/dashboard/paper-sets/${paperSetId}/review`}>

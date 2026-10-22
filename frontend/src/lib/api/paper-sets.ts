@@ -3,7 +3,7 @@
  */
 
 import { apiClient } from './client'
-import { PaperSet, PaperSetItem, PaginatedResponse, PaginationParams } from '@/types/models'
+import { PaperSet, PaperSetItem, PaginatedResponse, PaginationParams, Attempt, QuestionProgress } from '@/types/models'
 
 export interface PaperSetListFilters extends PaginationParams {
   search?: string
@@ -102,6 +102,14 @@ export const paperSetsApi = {
    */
   preview: async (id: string) => {
     const response = await apiClient.get<any>(`/paper-sets/${id}/preview`)
+    return response.data
+  },
+
+  reviewData: async (id: string) => {
+    const response = await apiClient.get<{
+      attempts: Record<string, Attempt[]>
+      progress: Record<string, QuestionProgress>
+    }>(`/paper-sets/${id}/review-data`)
     return response.data
   },
 

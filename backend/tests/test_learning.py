@@ -5,7 +5,9 @@ import pytest
 from sqlalchemy import select, func, event
 
 from api.core.datetime_utils import utcnow
-from api.models import Attempt, AttemptResult, Question, QuestionProgress, Image, QuestionImage, UserRole
+from api.models import Attempt, AttemptResult, Question, QuestionProgress, Image, QuestionImage, PaperSet, PaperSetItem, UserRole
+from api.core.deps import get_current_user
+from api.main import app
 from api.services.question_progress_service import question_progress_service as progress_service
 from api.services.review_service import review_service
 from api.services.attempt_service import attempt_service
@@ -76,6 +78,33 @@ async def test_edit_delete_replays_progress_without_date_drift(db, users, client
     assert response.status_code == 204
     await db.refresh(progress)
     assert (progress.total_attempts, progress.correct_attempts, progress.proficiency_score) == (1, 1, 60)
+
+
+async def test_note_edit_preserves_manual_review_date_but_result_edit_recalculates(db, users, client):
+    owner, _ = users
+    question = Question(user_id=owner.id, type='OTHER')
+    db.add(question)
+    await db.commit()
+    submitted = utcnow()
+    attempt = await attempt_service.create_attempt(db, owner.id, AttemptCreate(
+        question_id=question.id, result='CORRECT', submitted_at=submitted,
+    ))
+    progress = (await db.execute(select(QuestionProgress))).scalar_one()
+    planned = submitted + timedelta(days=30)
+    response = await client.patch(f'/api/v1/question-progress/{progress.id}', json={
+        'next_review_at': planned.isoformat(),
+    })
+    assert response.status_code == 200, response.text
+    before = response.json()['next_review_at']
+
+    response = await client.patch(f'/api/v1/attempts/{attempt.id}', json={'note': 'Study note'})
+    assert response.status_code == 200, response.text
+    assert (await client.get(f'/api/v1/question-progress/{progress.id}')).json()['next_review_at'] == before
+
+    response = await client.patch(f'/api/v1/attempts/{attempt.id}', json={'result': 'WRONG'})
+    assert response.status_code == 200, response.text
+    after = (await client.get(f'/api/v1/question-progress/{progress.id}')).json()
+    assert after['next_review_at'] != before and after['wrong_attempts'] == 1
 
 
 async def test_backdated_attempt_and_recalculation(db, users):
@@ -177,6 +206,67 @@ async def test_deleted_questions_excluded_from_all_statistics(db, users, client)
     assert all(value == 0 for value in (await attempt_service.get_attempt_stats(db, owner.id)).values())
     assert (await client.get('/api/v1/question-progress')).json()['total'] == 0
     assert (await client.get('/api/v1/reviews/today')).json()['items'] == []
+
+
+async def test_unmastered_mistakes_count_only_wrong_history_not_yet_mastered(db, users, client):
+    owner, _ = users
+    questions = [Question(user_id=owner.id, type='OTHER') for _ in range(3)]
+    db.add_all(questions)
+    await db.flush()
+    db.add_all([
+        QuestionProgress(user_id=owner.id, question_id=questions[0].id, is_mastered=True),
+        QuestionProgress(user_id=owner.id, question_id=questions[1].id, is_mastered=False),
+        QuestionProgress(user_id=owner.id, question_id=questions[2].id, is_mastered=True),
+        Attempt(user_id=owner.id, question_id=questions[1].id, result='WRONG'),
+        Attempt(user_id=owner.id, question_id=questions[2].id, result='WRONG'),
+    ])
+    await db.commit()
+    response = await client.get('/api/v1/analytics/overview')
+    assert response.status_code == 200, response.text
+    assert response.json()['mistake_questions'] == 2
+    assert response.json()['unmastered_mistake_questions'] == 1
+
+
+@pytest.mark.parametrize('count', [1, 25, 100])
+async def test_paper_set_review_data_is_batched_and_user_scoped(db, users, client, count):
+    owner, other = users
+    paper_set = PaperSet(user_id=owner.id, title='Batch practice')
+    questions = [Question(user_id=owner.id, type='OTHER') for _ in range(count)]
+    db.add_all([paper_set, *questions])
+    await db.flush()
+    for index, question in enumerate(questions):
+        db.add_all([
+            PaperSetItem(paper_set_id=paper_set.id, question_id=question.id, order_index=index),
+            Attempt(user_id=owner.id, question_id=question.id, result='WRONG', error_tags_json=['METHOD']),
+            QuestionProgress(user_id=owner.id, question_id=question.id, proficiency_score=35),
+        ])
+    # Preexisting data may contain attempts/progress for another account on this question.
+    db.add_all([
+        Attempt(user_id=other.id, question_id=questions[0].id, result='CORRECT', error_tags_json=[]),
+        QuestionProgress(user_id=other.id, question_id=questions[0].id, proficiency_score=99),
+    ])
+    await db.commit()
+
+    selects = []
+    engine = db.bind.sync_engine
+    def count_selects(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith('SELECT'):
+            selects.append(statement)
+    event.listen(engine, 'before_cursor_execute', count_selects)
+    try:
+        response = await client.get(f'/api/v1/paper-sets/{paper_set.id}/review-data')
+    finally:
+        event.remove(engine, 'before_cursor_execute', count_selects)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert len(data['attempts']) == len(data['progress']) == count
+    assert all(len(rows) == 1 and rows[0]['user_id'] == str(owner.id) for rows in data['attempts'].values())
+    assert all(row['proficiency_score'] == 35 for row in data['progress'].values())
+    assert len(selects) == 4, selects
+
+    app.dependency_overrides[get_current_user] = lambda: other
+    response = await client.get(f'/api/v1/paper-sets/{paper_set.id}/review-data')
+    assert response.status_code == 403
 
 
 @pytest.mark.parametrize('operation', ['create', 'update', 'attach', 'answer'])

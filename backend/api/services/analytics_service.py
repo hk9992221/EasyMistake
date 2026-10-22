@@ -1,7 +1,7 @@
 from collections import Counter, defaultdict
 from datetime import timedelta
 from uuid import UUID
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.core.datetime_utils import local_day_bounds_utc, utcnow
 from api.models.attempt import Attempt, AttemptResult
@@ -21,6 +21,22 @@ class AnalyticsService:
             await db.execute(
                 select(func.count(func.distinct(Attempt.question_id))).join(Question).where(Question.is_deleted.is_(False),
                     Attempt.user_id == user_id, Attempt.result == AttemptResult.WRONG
+                )
+            )
+        ).scalar() or 0
+
+        unmastered_mistake_questions = (
+            await db.execute(
+                select(func.count(func.distinct(Attempt.question_id)))
+                .join(Question)
+                .outerjoin(QuestionProgress, and_(
+                    QuestionProgress.question_id == Attempt.question_id,
+                    QuestionProgress.user_id == user_id,
+                ))
+                .where(
+                    Question.is_deleted.is_(False), Attempt.user_id == user_id,
+                    Attempt.result == AttemptResult.WRONG,
+                    or_(QuestionProgress.id.is_(None), QuestionProgress.is_mastered.is_(False)),
                 )
             )
         ).scalar() or 0
@@ -58,6 +74,7 @@ class AnalyticsService:
         return {
             "total_questions": total_questions,
             "mistake_questions": mistake_questions,
+            "unmastered_mistake_questions": unmastered_mistake_questions,
             "mastered_questions": mastered_questions,
             "due_today": due_today,
             "overdue": overdue,

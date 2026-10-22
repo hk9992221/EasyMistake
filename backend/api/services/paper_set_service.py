@@ -5,6 +5,10 @@ from sqlalchemy import select
 from api.models.paper_set import PaperSet
 from api.models.paper_set_item import PaperSetItem
 from api.models.question import Question
+from api.models.attempt import Attempt
+from api.models.question_progress import QuestionProgress
+from api.schemas.attempt import AttemptResponse
+from api.schemas.question_progress import QuestionProgressResponse
 from api.schemas.paper_set import (
     PaperSetCreate,
     PaperSetUpdate,
@@ -12,6 +16,7 @@ from api.schemas.paper_set import (
     PaperSetItemUpdate,
     PaperSetItemResponse,
     PaperSetPreviewResponse,
+    PaperSetReviewDataResponse,
     PreviewQuestion,
     BatchUpsertPaperSetRequest,
 )
@@ -275,6 +280,39 @@ class PaperSetService:
             description=paper_set.description,
             output_format=paper_set.output_format,
             questions=items,
+        )
+
+    async def review_data(
+        self,
+        db: AsyncSession,
+        paper_set_id: UUID,
+        user_id: UUID,
+        is_admin: bool = False,
+    ) -> PaperSetReviewDataResponse:
+        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin)
+        question_ids = (await db.execute(
+            select(PaperSetItem.question_id).where(PaperSetItem.paper_set_id == paper_set_id)
+        )).scalars().all()
+        if not question_ids:
+            return PaperSetReviewDataResponse(attempts={}, progress={})
+
+        attempts = (await db.execute(
+            select(Attempt).where(Attempt.user_id == user_id, Attempt.question_id.in_(question_ids))
+            .order_by(Attempt.occurred_at.desc(), Attempt.id.desc())
+        )).scalars().all()
+        progress = (await db.execute(
+            select(QuestionProgress).where(
+                QuestionProgress.user_id == user_id,
+                QuestionProgress.question_id.in_(question_ids),
+            )
+        )).scalars().all()
+
+        by_question: dict[str, list[AttemptResponse]] = {}
+        for attempt in attempts:
+            by_question.setdefault(str(attempt.question_id), []).append(AttemptResponse.model_validate(attempt))
+        return PaperSetReviewDataResponse(
+            attempts=by_question,
+            progress={str(item.question_id): QuestionProgressResponse.model_validate(item) for item in progress},
         )
 
     async def _ensure_paper_set_access(
