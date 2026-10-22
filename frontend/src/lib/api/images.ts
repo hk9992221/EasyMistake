@@ -6,6 +6,13 @@ import { apiClient } from './client'
 import { Image, PaginatedResponse, PaginationParams } from '@/types/models'
 
 export const imagesApi = {
+  getFile: async (id: string, signal?: AbortSignal): Promise<Blob> => {
+    const response = await apiClient.get<Blob>(`/images/${id}/file`, {
+      responseType: 'blob', signal,
+    })
+    return response.data
+  },
+
   /**
    * 直接上传文件（推荐使用）
    */

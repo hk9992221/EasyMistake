@@ -14,13 +14,13 @@ from api.schemas.paper_set import (
     PaperSetUpdate,
     PaperSetItemCreate,
     PaperSetItemUpdate,
-    PaperSetItemResponse,
     PaperSetPreviewResponse,
     PaperSetReviewDataResponse,
     PreviewQuestion,
     BatchUpsertPaperSetRequest,
 )
 from api.core.exceptions import NotFoundError, ForbiddenError
+from api.core.access import require_question_access
 
 
 class PaperSetService:
@@ -114,7 +114,7 @@ class PaperSetService:
         user_id: UUID,
         is_admin: bool = False,
     ) -> PaperSetItem:
-        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin)
+        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin, lock=True)
         await self._ensure_question_access(db, question_id, user_id, is_admin)
 
         result = await db.execute(
@@ -128,7 +128,6 @@ class PaperSetService:
         if item:
             item.order_index = item_data.order_index
             item.section_title = item_data.section_title
-            # Convert float to None if 0.0, otherwise keep the value
             item.score = item_data.score if item_data.score is not None else None
         else:
             item = PaperSetItem(
@@ -153,7 +152,7 @@ class PaperSetService:
         user_id: UUID,
         is_admin: bool = False,
     ) -> PaperSetItem:
-        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin)
+        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin, lock=True)
 
         result = await db.execute(
             select(PaperSetItem).where(
@@ -185,7 +184,7 @@ class PaperSetService:
         user_id: UUID,
         is_admin: bool = False,
     ) -> None:
-        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin)
+        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin, lock=True)
 
         result = await db.execute(
             select(PaperSetItem).where(
@@ -207,27 +206,31 @@ class PaperSetService:
         request: BatchUpsertPaperSetRequest,
         user_id: UUID,
         is_admin: bool = False,
-    ) -> List[PaperSetItemResponse]:
-        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin)
+    ) -> List[PaperSetItem]:
+        await self._ensure_paper_set_access(db, paper_set_id, user_id, is_admin, lock=True)
+        question_ids = [item.question_id for item in request.items]
+        questions = (await db.execute(select(Question).where(Question.id.in_(question_ids))
+                     .order_by(Question.id).with_for_update()
+                     .execution_options(populate_existing=True))).scalars().all()
+        if len(questions) != len(question_ids) or any(question.is_deleted for question in questions):
+            raise NotFoundError(detail="One or more questions are missing or deleted")
+        if not is_admin and any(question.user_id != user_id for question in questions):
+            raise ForbiddenError(detail="You don't have permission to access one or more questions")
 
+        existing = {item.question_id: item for item in (await db.execute(select(PaperSetItem).where(
+            PaperSetItem.paper_set_id == paper_set_id, PaperSetItem.question_id.in_(question_ids),
+        ))).scalars().all()}
         results = []
-        for item in request.items:
-            await self._ensure_question_access(db, item.question_id, user_id, is_admin)
-            result = await self.upsert_item(
-                db,
-                paper_set_id,
-                item.question_id,
-                PaperSetItemCreate(
-                    question_id=item.question_id,
-                    order_index=item.order_index,
-                    section_title=item.section_title,
-                    score=item.score,
-                ),
-                user_id,
-                is_admin=is_admin,
-            )
-            results.append(result)
-
+        for data in request.items:
+            item = existing.get(data.question_id)
+            if item is None:
+                item = PaperSetItem(paper_set_id=paper_set_id, question_id=data.question_id)
+                db.add(item)
+            item.order_index = data.order_index
+            item.section_title = data.section_title
+            item.score = data.score
+            results.append(item)
+        await db.commit()
         return results
 
     async def preview_paper_set(
@@ -321,8 +324,12 @@ class PaperSetService:
         paper_set_id: UUID,
         user_id: UUID,
         is_admin: bool,
+        lock: bool = False,
     ) -> None:
-        paper_set = await self.get_paper_set(db, paper_set_id)
+        query = select(PaperSet).where(PaperSet.id == paper_set_id)
+        if lock:
+            query = query.with_for_update().execution_options(populate_existing=True)
+        paper_set = (await db.execute(query)).scalar_one_or_none()
         if not paper_set:
             raise NotFoundError(detail="Paper set not found")
 
@@ -336,13 +343,7 @@ class PaperSetService:
         user_id: UUID,
         is_admin: bool,
     ) -> None:
-        result = await db.execute(select(Question).where(Question.id == question_id))
-        question = result.scalar_one_or_none()
-        if not question:
-            raise NotFoundError(detail="Question not found")
-
-        if not is_admin and question.user_id != user_id:
-            raise ForbiddenError(detail="You don't have permission to access this question")
+        await require_question_access(db, question_id, user_id, is_admin)
 
 
 paper_set_service = PaperSetService()

@@ -5,6 +5,7 @@ import { invalidateLearning } from '@/lib/api/invalidate-learning'
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
 
+import { AuthenticatedImage } from '@/components/authenticated-image'
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -1185,8 +1186,8 @@ export default function QuestionDetailPage() {
                     <div className="grid grid-cols-4 gap-3">
                       {question.stem_images.map((image: any) => (
                         <div key={image.image_id} className="relative group">
-                          <img
-                            src={image.url}
+                          <AuthenticatedImage
+                            imageId={image.image_id}
                             alt={`题干图片 ${image.order_index}`}
                             className="w-full h-auto rounded-lg border"
                           />
@@ -1252,9 +1253,9 @@ export default function QuestionDetailPage() {
                   {question.stem_images && question.stem_images.length > 0 && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       {question.stem_images.map((image: any) => (
-                        <img
+                        <AuthenticatedImage
                           key={image.image_id}
-                          src={image.url}
+                          imageId={image.image_id}
                           alt={`题干图片 ${image.order_index}`}
                           className="w-full h-auto rounded-lg border"
                         />
@@ -1333,8 +1334,8 @@ export default function QuestionDetailPage() {
                         <div className="grid grid-cols-3 gap-3">
                           {answer.images.map((image: any, index: number) => (
                             <div key={image.image_id || index} className="group relative">
-                              <img
-                                src={image.url}
+                              <AuthenticatedImage
+                                imageId={image.image_id}
                                 alt={`答案图片 ${index + 1}`}
                                 className="h-auto w-full rounded-lg border"
                               />
@@ -1385,9 +1386,9 @@ export default function QuestionDetailPage() {
                     {answer?.images && answer.images.length > 0 && (
                       <div className="space-y-3">
                         {answer.images.map((image: any, index: number) => (
-                          <img
+                          <AuthenticatedImage
                             key={image.image_id || index}
-                            src={image.url}
+                            imageId={image.image_id}
                             alt={`答案图片 ${index + 1}`}
                             className="max-w-full h-auto rounded-lg border"
                           />

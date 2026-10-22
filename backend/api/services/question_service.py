@@ -1,4 +1,6 @@
 import re
+import hashlib
+import json
 from uuid import UUID
 from typing import Callable, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,9 +14,12 @@ from api.models.attempt import Attempt, AttemptResult
 from api.models.question_progress import QuestionProgress
 from api.models.paper import Paper
 from api.models.extraction import QuestionExtraction
+from api.models.user import User
 from api.core.access import require_owned_resources
-from api.schemas.question import QuestionCreate, QuestionUpdate, QuestionListParams
-from api.core.exceptions import NotFoundError, ForbiddenError
+from api.schemas.question import QuestionCreate, QuestionUpdate, QuestionListParams, QuestionBundleCreate
+from api.schemas.answer import AnswerUpdate
+from api.services.answer_service import answer_service
+from api.core.exceptions import NotFoundError, ForbiddenError, ConflictError
 
 
 class QuestionService:
@@ -124,6 +129,42 @@ class QuestionService:
         if commit:
             await db.commit()
             await db.refresh(question)
+        return question
+
+    async def create_question_bundle(
+        self,
+        db: AsyncSession,
+        user_id: UUID,
+        payload: QuestionBundleCreate,
+        is_admin: bool = False,
+    ) -> Question:
+        serialized = json.dumps(payload.model_dump(mode="json", exclude={"request_id"}),
+                                sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        payload_hash = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        # Serializes concurrent saves for the same user, including a lost-response retry.
+        await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+        existing = (await db.execute(select(Question).where(
+            Question.user_id == user_id, Question.client_request_id == payload.request_id,
+        ))).scalar_one_or_none()
+        if existing:
+            if existing.is_deleted:
+                raise ConflictError(detail="这次提交的题目已被删除，请使用新的请求编号")
+            if existing.client_payload_hash != payload_hash:
+                raise ConflictError(detail="同一请求编号不能用于不同内容")
+            return existing
+
+        if payload.answer and payload.answer.images:
+            await require_owned_resources(db, Image, [item.image_id for item in payload.answer.images], user_id, is_admin)
+        question = await self.create_question(db, user_id, payload.question, commit=False, is_admin=is_admin)
+        question.client_request_id = payload.request_id
+        question.client_payload_hash = payload_hash
+        if payload.answer is not None:
+            await answer_service.upsert_answer(
+                db, question.id, AnswerUpdate(**payload.answer.model_dump()),
+                updater_id=user_id, is_admin=is_admin, commit=False,
+            )
+        await db.commit()
+        await db.refresh(question)
         return question
 
     async def get_question_by_id(

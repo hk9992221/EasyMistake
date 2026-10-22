@@ -10,6 +10,7 @@ from api.services.question_service import question_service
 from api.services.answer_service import answer_service
 from api.schemas.question import (
     QuestionCreate,
+    QuestionBundleCreate,
     QuestionUpdate,
     QuestionResponse,
     QuestionListParams,
@@ -133,7 +134,7 @@ async def _serialize_answer_with_images(db: AsyncSession, answer: Answer, reques
     images = images_result.all()
 
     for answer_image, image in images:
-        # Use direct MinIO URL (bucket is public)
+        # File reads use the authenticated image proxy.
         result["images"].append(
             AnswerImageItem(
                 image_id=image.id,
@@ -165,6 +166,19 @@ async def create_question(
     request: Request = None,
 ):
     question = await question_service.create_question(db, current_user.id, question_data, is_admin=current_user.role == UserRole.ADMIN)
+    return await _serialize_question_with_images(db, question, request)
+
+
+@router.post("/with-answer", response_model=QuestionResponse, status_code=status.HTTP_201_CREATED)
+async def create_question_with_answer(
+    payload: QuestionBundleCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    question = await question_service.create_question_bundle(
+        db, current_user.id, payload, is_admin=current_user.role == UserRole.ADMIN,
+    )
     return await _serialize_question_with_images(db, question, request)
 
 

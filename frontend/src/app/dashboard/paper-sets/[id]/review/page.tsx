@@ -2,6 +2,7 @@
 
 import { invalidateLearning } from '@/lib/api/invalidate-learning'
 
+import { AuthenticatedImage } from '@/components/authenticated-image'
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
@@ -326,9 +327,9 @@ export default function PaperSetReviewPage() {
                 {Array.isArray((currentAnswer as any)?.images) && (currentAnswer as any).images.length > 0 && (
                   <div className="mt-3 space-y-3">
                     {(currentAnswer as any).images.map((image: any, index: number) => (
-                      <img
+                      <AuthenticatedImage
                         key={image.image_id || index}
-                        src={image.url}
+                        imageId={image.image_id}
                         alt={`答案图片 ${index + 1}`}
                         className="max-w-full h-auto rounded-lg border"
                       />

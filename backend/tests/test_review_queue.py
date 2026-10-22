@@ -101,7 +101,7 @@ async def test_review_details_use_fixed_queries_and_include_images(db, users, cl
         assert item['answer']['answer_latex'] == r'$x=1$'
         assert item['answer']['explanation_text'] == '解析'
         for images in [item['question']['stem_images'], item['answer']['images']]:
-            assert images[0]['url'] == f'http://test/api/v1/images/{image.id}/file?token=test-image-token'
+            assert images[0]['url'] == f'http://test/api/v1/images/{image.id}/file'
 
 
 @pytest.mark.parametrize('query', ['page=0', 'page_size=0', 'page_size=101', 'subject=', 'subject=' + 'x' * 65])

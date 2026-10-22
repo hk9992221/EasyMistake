@@ -1,14 +1,13 @@
 from uuid import UUID
+import asyncio
 
-from fastapi import APIRouter, Depends, File, UploadFile, status, Query
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from fastapi.responses import Response
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from api.core.database import get_db
 from api.core.deps import get_current_user
-from api.core.security import decode_access_token
 from api.models.user import User, UserRole
 from api.models.image import Image
 from api.schemas.image import (
@@ -18,40 +17,10 @@ from api.schemas.image import (
     ImageUploadUrlRequest,
 )
 from api.services.image_service import image_service
-from api.core.exceptions import NotFoundError, ForbiddenError, UnauthorizedError
+from api.core.exceptions import NotFoundError, ForbiddenError
 
 
 router = APIRouter(prefix="/images", tags=["Images"])
-optional_security = HTTPBearer(auto_error=False)
-
-
-async def get_current_user_from_header_or_query(
-    credentials: HTTPAuthorizationCredentials | None = Depends(optional_security),
-    token: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    bearer_token = credentials.credentials if credentials else None
-    raw_token = bearer_token or token
-    if not raw_token:
-        raise UnauthorizedError(detail="Not authenticated")
-
-    payload = decode_access_token(raw_token)
-    user_id_str = payload.get("sub")
-    if not user_id_str:
-        raise UnauthorizedError(detail="Invalid token")
-
-    try:
-        user_id = UUID(user_id_str)
-    except ValueError:
-        raise UnauthorizedError(detail="Invalid token")
-
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise UnauthorizedError(detail="User not found")
-    if not user.is_active:
-        raise UnauthorizedError(detail="User is inactive")
-    return user
 
 
 @router.post("/upload-url", response_model=UploadUrlResponse)
@@ -129,19 +98,10 @@ async def delete_image(
 @router.get("/{image_id}/file", response_class=Response)
 async def get_image_file(
     image_id: UUID,
-    current_user: User = Depends(get_current_user_from_header_or_query),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get image file by ID (proxy endpoint to S3/MinIO)
-
-    This endpoint acts as a proxy to the object storage, handling:
-    - Authentication
-    - Authorization
-    - CORS
-    - Streaming
-    - Caching
-    """
+    """Read a private image through S3/MinIO with header authentication."""
     # Get image record
     result = await db.execute(select(Image).where(Image.id == image_id))
     image = result.scalar_one_or_none()
@@ -156,16 +116,18 @@ async def get_image_file(
 
     # Fetch image bytes from S3
     try:
-        image_bytes = image_service.fetch_image_bytes(image.object_key)
-    except Exception as e:
-        raise NotFoundError(detail=f"Failed to fetch image from storage: {str(e)}")
+        image_bytes = await asyncio.to_thread(image_service.fetch_image_bytes, image.object_key)
+    except Exception:
+        raise NotFoundError(detail="Image file could not be loaded")
 
     # Return image with proper content type and cache headers
     return Response(
         content=image_bytes,
         media_type=image.mime or "image/jpeg",
         headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
+            "Cache-Control": "private, no-store",
+            "Vary": "Authorization",
+            "X-Content-Type-Options": "nosniff",
             "Content-Disposition": f'inline; filename="{image.object_key.split("/")[-1]}"',
         },
     )

@@ -1,4 +1,4 @@
-from sqlalchemy import Index, Column, String, Text, Integer, Boolean, ForeignKey
+from sqlalchemy import Index, Column, String, Text, Integer, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from api.models.base import BaseModel
@@ -22,9 +22,14 @@ class DifficultyLevel(str, enum.Enum):
 
 class Question(BaseModel):
     __tablename__ = "questions"
-    __table_args__ = (Index("ix_questions_user_deleted_created", "user_id", "is_deleted", "created_at", "id"),)
+    __table_args__ = (
+        Index("ix_questions_user_deleted_created", "user_id", "is_deleted", "created_at", "id"),
+        UniqueConstraint("user_id", "client_request_id", name="uq_questions_user_client_request"),
+    )
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    client_request_id = Column(UUID(as_uuid=True), nullable=True)
+    client_payload_hash = Column(String(64), nullable=True)
     paper_id = Column(UUID(as_uuid=True), ForeignKey("papers.id", ondelete="SET NULL"), nullable=True)
 
     # Classification

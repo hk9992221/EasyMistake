@@ -2,6 +2,7 @@
 
 import { invalidateLearning } from '@/lib/api/invalidate-learning'
 
+import { AuthenticatedImage } from '@/components/authenticated-image'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -287,8 +288,8 @@ export default function ReviewsPage() {
                           className="prose prose-sm max-w-none whitespace-pre-wrap text-sm"
                         />
                         {question?.appendix && <LatexContent text={question.appendix} className="whitespace-pre-wrap text-sm text-muted-foreground" />}
-                        {question?.stem_images?.map((image, index) => image.url && (
-                          <img key={image.image_id} src={image.url} alt={`题干图片 ${index + 1}`} className="h-auto max-w-full rounded-lg border" />
+                        {question?.stem_images?.map((image, index) => (
+                          <AuthenticatedImage key={image.image_id} imageId={image.image_id} alt={`题干图片 ${index + 1}`} className="h-auto max-w-full rounded-lg border" />
                         ))}
                         {options.length > 0 && (
                           <div className="space-y-2 rounded-md border bg-background p-3">
@@ -323,9 +324,9 @@ export default function ReviewsPage() {
                         {answerImages.length > 0 && (
                             <div className="mt-3 space-y-3">
                               {answerImages.map((image, index) => (
-                                <img
+                                <AuthenticatedImage
                                   key={image.image_id || index}
-                                  src={image.url}
+                                  imageId={image.image_id}
                                   alt={`答案图片 ${index + 1}`}
                                   className="h-auto max-w-full rounded-lg border"
                                 />

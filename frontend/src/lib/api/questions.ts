@@ -4,6 +4,13 @@
 
 import { apiClient } from './client'
 import { Question, PaginatedResponse, QuestionFilters } from '@/types/models'
+import type { AnswerUpdateRequest } from './answers'
+
+export interface QuestionBundleRequest {
+  request_id: string
+  question: Partial<Question> & { stem_image_ids?: string[] }
+  answer?: AnswerUpdateRequest | null
+}
 
 export const questionsApi = {
   /**
@@ -51,6 +58,12 @@ export const questionsApi = {
    */
   create: async (data: Partial<Question>) => {
     const response = await apiClient.post<Question>('/questions', data)
+    return response.data
+  },
+
+  /** 一次保存题目、题干图片和答案；重试时复用 request_id。 */
+  createWithAnswer: async (data: QuestionBundleRequest) => {
+    const response = await apiClient.post<Question>('/questions/with-answer', data)
     return response.data
   },
 

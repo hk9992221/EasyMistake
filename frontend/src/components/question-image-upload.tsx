@@ -1,5 +1,6 @@
 'use client'
 
+import { AuthenticatedImage } from '@/components/authenticated-image'
 import { useState, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -126,8 +127,8 @@ export function QuestionImageUpload({ questionId, images, onImagesChange }: Ques
                 .sort((a, b) => a.order_index - b.order_index)
                 .map((image) => (
                   <div key={image.image_id} className="group relative aspect-square">
-                    <img
-                      src={image.url}
+                    <AuthenticatedImage
+                      imageId={image.image_id}
                       alt={`题干图片 ${image.order_index}`}
                       className="w-full h-full object-cover rounded-lg border"
                     />

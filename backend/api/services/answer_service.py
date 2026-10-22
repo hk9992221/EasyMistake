@@ -23,6 +23,7 @@ class AnswerService:
         answer_data: AnswerUpdate,
         updater_id: Optional[UUID] = None,
         is_admin: bool = False,
+        commit: bool = True,
     ) -> Answer:
         result = await db.execute(select(Answer).where(Answer.question_id == question_id))
         answer = result.scalar_one_or_none()
@@ -74,8 +75,10 @@ class AnswerService:
                     )
                     db.add(answer_image)
 
-        await db.commit()
-        await db.refresh(answer)
+        await db.flush()
+        if commit:
+            await db.commit()
+            await db.refresh(answer)
         return answer
 
 

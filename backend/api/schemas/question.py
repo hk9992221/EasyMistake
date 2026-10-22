@@ -1,9 +1,10 @@
 from uuid import UUID
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from pydantic import Field
+from pydantic import Field, model_validator
 from api.models.question import QuestionType, DifficultyLevel
 from api.schemas.common import BaseSchema
+from api.schemas.answer import AnswerCreate
 
 
 class QuestionImageItem(BaseSchema):
@@ -36,6 +37,25 @@ class QuestionBase(BaseSchema):
 class QuestionCreate(QuestionBase):
     paper_id: Optional[UUID] = None
     from_extraction_id: Optional[UUID] = None
+
+
+class QuestionBundleCreate(BaseSchema):
+    request_id: UUID
+    question: QuestionCreate
+    answer: AnswerCreate | None = None
+
+    @model_validator(mode="after")
+    def validate_images(self):
+        stem_ids = self.question.stem_image_ids
+        if len(stem_ids) != len(set(stem_ids)):
+            raise ValueError("题干图片不能重复")
+        if self.answer and self.answer.images:
+            answer_ids = [image.image_id for image in self.answer.images]
+            if len(answer_ids) != len(set(answer_ids)):
+                raise ValueError("答案图片不能重复")
+            if any(image.order_index < 0 for image in self.answer.images):
+                raise ValueError("图片顺序不能为负数")
+        return self
 
 
 class QuestionUpdate(BaseSchema):

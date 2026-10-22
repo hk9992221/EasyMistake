@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from pydantic import Field
+from pydantic import Field, field_validator
 from api.models.paper_set import OutputFormat
 from api.schemas.attempt import AttemptResponse
 from api.schemas.question_progress import QuestionProgressResponse
@@ -98,12 +98,17 @@ class PaperSetReviewDataResponse(BaseSchema):
     progress: Dict[str, QuestionProgressResponse]
 
 
-class BatchUpsertPaperSetItem(BaseSchema):
-    question_id: UUID
-    order_index: int
-    section_title: Optional[str] = None
-    score: Optional[float] = None
+class BatchUpsertPaperSetItem(PaperSetItemCreate):
+    pass
 
 
 class BatchUpsertPaperSetRequest(BaseSchema):
-    items: List[BatchUpsertPaperSetItem]
+    items: List[BatchUpsertPaperSetItem] = Field(..., min_length=1, max_length=1000)
+
+    @field_validator("items")
+    @classmethod
+    def unique_questions(cls, items):
+        ids = [item.question_id for item in items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("同一批次不能包含重复题目")
+        return items

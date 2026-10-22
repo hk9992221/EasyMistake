@@ -1,9 +1,10 @@
 ﻿'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { questionsApi, imagesApi, answersApi } from '@/lib/api'
+import { questionsApi, imagesApi } from '@/lib/api'
+import type { AnswerUpdateRequest } from '@/lib/api/answers'
 import { useToast } from '@/lib/hooks/use-toast'
 import { parseLabels } from '@/lib/label-parser'
 import { ImageRecognitionDialog } from '@/components/image-recognition-dialog'
@@ -122,6 +123,19 @@ export default function ExtractPage() {
   const [autoRecognizeFiles, setAutoRecognizeFiles] = useState<File[] | null>(null)
   const [copiedPrompt, setCopiedPrompt] = useState(false)
   const [autoExamplePrefix, setAutoExamplePrefix] = useState(false)
+  const uploadedFiles = useRef(new WeakMap<File, Promise<string>>())
+  const pendingSave = useRef<{ payload: string; requestId: string } | null>(null)
+
+  const uploadOnce = (file: File): Promise<string> => {
+    const cached = uploadedFiles.current.get(file)
+    if (cached) return cached
+    const upload = imagesApi.upload(file).then((image) => image.id).catch((error) => {
+      uploadedFiles.current.delete(file)
+      throw error
+    })
+    uploadedFiles.current.set(file, upload)
+    return upload
+  }
 
   useEffect(() => {
     const saved = localStorage.getItem(EXAMPLE_PREFIX_STORAGE_KEY)
@@ -167,9 +181,19 @@ export default function ExtractPage() {
 
       const uploadedStemIds: string[] = []
       for (const file of formData.stemImages) {
-        const img = await imagesApi.upload(file)
-        uploadedStemIds.push(img.id)
+        uploadedStemIds.push(await uploadOnce(file))
       }
+      const uploadedAnswerIds: string[] = []
+      for (const file of formData.answerImages) {
+        uploadedAnswerIds.push(await uploadOnce(file))
+      }
+      const stemImageIds = Array.from(new Set([
+        ...(includeRecognizedStemImages ? formData.recognizedStemImageIds : []),
+        ...uploadedStemIds,
+      ]))
+      const answerImages = Array.from(new Set(uploadedAnswerIds)).map((image_id, order_index) => ({
+        image_id, order_index,
+      }))
 
       const finalOptions = formData.options
         .map((opt) => ({ key: opt.key.trim(), text: opt.text.trim() }))
@@ -181,7 +205,7 @@ export default function ExtractPage() {
         ...(isChoiceType ? { options: finalOptions } : {}),
       }
 
-      const question = await questionsApi.create({
+      const question = {
         subject: formData.subject,
         type: formData.type,
         difficulty: formData.difficulty || null,
@@ -196,35 +220,25 @@ export default function ExtractPage() {
         chapter_name: formData.chapterName || null,
         page_no: formData.pageNo ? Number(formData.pageNo) : null,
         question_no: formData.questionNo || null,
-      } as any)
-
-      const allStemIds = includeRecognizedStemImages
-        ? [...formData.recognizedStemImageIds, ...uploadedStemIds]
-        : uploadedStemIds
-      for (const imageId of allStemIds) {
-        await questionsApi.addImage(question.id, imageId)
+        stem_image_ids: stemImageIds,
       }
-
-      if (formData.answerText || formData.answerImages.length > 0) {
-        const answerImages: Array<{ image_id: string; order_index: number }> = []
-        for (let i = 0; i < formData.answerImages.length; i += 1) {
-          const img = await imagesApi.upload(formData.answerImages[i])
-          answerImages.push({ image_id: img.id, order_index: i })
-        }
-
-        const answerType =
-          formData.answerText && answerImages.length > 0
-            ? 'MIXED'
-            : formData.answerText
-            ? 'TEXT'
-            : 'IMAGE'
-
-        await answersApi.upsert(question.id, {
-          answer_type: answerType,
-          answer_text: formData.answerText || null,
-          images: answerImages.length > 0 ? answerImages : undefined,
-        })
+      const answer: AnswerUpdateRequest | null = formData.answerText || answerImages.length > 0
+        ? {
+            answer_type: formData.answerText ? (answerImages.length > 0 ? 'MIXED' : 'TEXT') : 'IMAGE',
+            answer_text: formData.answerText || null,
+            images: answerImages,
+          }
+        : null
+      const payload = JSON.stringify({ question, answer })
+      // Keep the same ID after a lost response; edited content starts a new submission.
+      if (pendingSave.current?.payload !== payload) {
+        pendingSave.current = { payload, requestId: crypto.randomUUID() }
       }
+      return questionsApi.createWithAnswer({
+        request_id: pendingSave.current.requestId,
+        question,
+        answer,
+      })
     },
     onSuccess: () => {
       toast({ title: '成功', description: '试题录入成功' })

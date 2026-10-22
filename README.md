@@ -109,7 +109,7 @@ npm run dev
 
 ## 升级与任务运行
 
-更新依赖后，先在 `backend` 目录执行 `alembic upgrade head`，再启动服务。本次迁移增加批改记录表及查询索引，不自动归属旧 JSON 数据。
+更新依赖后，先在 `backend` 目录执行 `alembic upgrade head`，再启动服务。迁移包含批改记录表、查询索引和完整录题的防重复提交字段，不自动归属旧 JSON 数据。
 
 识别任务创建后直接入队，前端轮询状态；关闭窗口后，可从“识别记录”查看结果。`/extractions/{id}/retry` 只入队，重复点击会复用活动任务，已完成的任务不会再次识别。
 
@@ -134,6 +134,12 @@ python -m api.scripts.import_grading --file data/simple_grading_records.json --u
 `GET /api/v1/reviews/today` 和 `/reviews/queue` 支持 `page`、`page_size`（1–100）、`subject` 和 `include_details`，返回真实总数及分页信息。开启详情后批量获取当前页的题干、题干图片、答案和解析，不再逐题请求；今日范围按 `APP_TIMEZONE` 计算。
 
 `POST /api/v1/reviews/daily-paper-set` 接收 `{}` 或 `{"subject":"数学"}`，在一个事务内按当前到期队列生成或更新组卷，包含全部匹配题目，不受当前分页影响。同账号、同一天、同学科的重复请求复用已有自动组卷；保留仍在卷中的题目分值与分组，不覆盖仅仅同名的手动组卷。生成成功后可继续创建 LaTeX 导出任务；导出未完成时可到组卷的导出历史下载。
+
+录题页面先上传图片，再调用 `POST /api/v1/questions/with-answer`，将题目、题干图片关联和答案放在同一事务中保存。请求格式为 `{ "request_id": "UUID", "question": { ... }, "answer": { ... } }`，无答案时可省略 `answer`。同账号使用相同请求编号重试相同内容，会返回已保存的题目；内容不同或该题已删除则返回 409。页面内重试会复用已上传图片及请求编号，避免网络错误造成重复录题；图片上传本身独立于保存事务。
+
+`POST /api/v1/paper-sets/{id}/items/batch` 每批接收 1–1000 道不重复的题目，先校验全部题目权限、删除状态、顺序与分数，再一次提交。任意一项失败，整批保持原状。
+
+图片文件接口 `/api/v1/images/{id}/file` 只接受 `Authorization: Bearer ...` 请求头，不再接受 URL 中的登录令牌。前端按图片 ID 获取 Blob 并展示，复用内存中的图片请求；服务端返回 `private, no-store` 缓存策略。此次升级需同时更新前后端，并完成数据库迁移；自行调用图片接口的客户端也需改用请求头。
 
 ## 验证
 
